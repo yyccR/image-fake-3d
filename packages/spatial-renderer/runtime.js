@@ -37,6 +37,11 @@ export class SpatialWallpaperRuntime {
     this.scheduleFrame()
   }
 
+  setDepthMode(enabled) {
+    this.renderer.setDepthMode(enabled)
+    this.scheduleFrame()
+  }
+
   getDepthMetrics() {
     return this.renderer.getDepthMetrics()
   }

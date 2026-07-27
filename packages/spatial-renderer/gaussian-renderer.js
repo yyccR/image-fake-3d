@@ -41,6 +41,7 @@ export class GaussianSceneRenderer {
     this.depthRatio = 3
     this.depthGain = 1.2
     this.depthMode = false
+    this.colorMaxSh = 3
     this.poseX = 0
     this.poseY = 0
     this.currentX = 0
@@ -101,6 +102,7 @@ export class GaussianSceneRenderer {
     }
 
     this.mesh = mesh
+    this.colorMaxSh = mesh.maxSh
     const bounds = mesh.getBoundingBox(true)
     const center = bounds.getCenter(new THREE.Vector3())
     const size = bounds.getSize(new THREE.Vector3())
@@ -181,13 +183,18 @@ export class GaussianSceneRenderer {
   }
 
   setDepthMode(enabled) {
+    const wasDepthMode = this.depthMode
     this.depthMode = Boolean(enabled)
     this.renderer.setClearColor(this.depthMode ? 0x10191b : 0x071b1b, this.depthMode ? 1 : 0)
     if (!this.mesh || !this.loaded) return
     if (this.depthMode) {
+      if (!wasDepthMode) this.colorMaxSh = this.mesh.maxSh
+      // Directional spherical-harmonic color must be disabled or it tints the grayscale depth.
+      this.mesh.maxSh = 0
       // Near splats are light and distant splats dark, making model-predicted Z explicit.
       modifiers.setDepthColor(this.mesh, this.nearDepth, this.farDepth, true)
     } else {
+      this.mesh.maxSh = this.colorMaxSh
       this.mesh.worldModifier = undefined
       this.mesh.enableWorldToView = false
       this.mesh.updateGenerator()

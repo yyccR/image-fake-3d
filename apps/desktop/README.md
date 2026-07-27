@@ -3,8 +3,10 @@
 The desktop app is a Tauri 2 shell around the shared
 `@image-fake-3d/spatial-renderer` WebGL package.
 
-The `main` WebView owns photo selection, local SHARP generation, preview, and
-settings. SOG remains an internal transport format. Applying a generated scene
+The `main` WebView owns photo selection, local SHARP generation, spatial/depth
+preview modes, and settings. The depth view renders each Gaussian from its
+camera-space Z value, with light tones near and dark tones far. SOG remains an
+internal transport format. Applying a generated scene
 creates a second hidden `wallpaper` WebView sized to the primary display. Rust
 validates the local generator URL and selected image path, and the wallpaper
 reports ready only after its SOG has been parsed and uploaded to the GPU. The

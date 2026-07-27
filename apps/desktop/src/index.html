@@ -10,24 +10,16 @@
   </head>
   <body>
     <main class="app-shell">
-      <header class="topbar">
-        <div class="brand"><span></span>SPATIAL / WALLPAPER</div>
-        <div class="platform-pill">macOS prototype · primary display</div>
-      </header>
-
-      <section class="hero-copy">
-        <p class="eyebrow">GAUSSIAN DESKTOP ENGINE · 01</p>
-        <h1>把视角，<em>放进桌面。</em></h1>
-        <p>只需选择一张照片。本机模型会自动重建真实深度并生成空间壁纸；应用后 Finder 图标保持固定，画面随全局鼠标位置产生视差。</p>
-      </section>
-
       <section class="workspace">
         <div class="preview-column">
           <div class="display-frame" id="previewFrame">
             <div class="display-toolbar">
               <span class="display-dot"></span>
               <span>LIVE DESKTOP PREVIEW</span>
-              <output id="fpsMode">按需渲染</output>
+              <div class="preview-modes" role="group" aria-label="预览显示模式">
+                <button id="photoView" class="active" type="button" aria-pressed="true">空间效果</button>
+                <button id="depthView" type="button" aria-pressed="false" disabled>深度图</button>
+              </div>
             </div>
             <div class="display-surface" id="previewSurface">
               <img id="backgroundPreview" alt="壁纸原图后备层" hidden>
@@ -45,11 +37,16 @@
               <div class="depth-badge" id="depthBadge" hidden>
                 <span>DEPTH</span><strong id="depthReading">—</strong>
               </div>
+              <div class="depth-key" id="depthKey" hidden aria-hidden="true">
+                <span>远</span>
+                <div></div>
+                <span>近</span>
+              </div>
             </div>
             <div class="display-foot">
               <span>MOVE POINTER</span>
               <span class="display-rule"></span>
-              <span>窗口不捕获桌面点击</span>
+              <span id="previewHint">窗口不捕获桌面点击</span>
             </div>
           </div>
 

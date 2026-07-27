@@ -13,7 +13,9 @@ const elements = {
   depthBadge: document.querySelector('#depthBadge'),
   depthGain: document.querySelector('#depthGain'),
   depthGainOutput: document.querySelector('#depthGainOutput'),
+  depthKey: document.querySelector('#depthKey'),
   depthReading: document.querySelector('#depthReading'),
+  depthView: document.querySelector('#depthView'),
   emptyState: document.querySelector('#emptyState'),
   hostReading: document.querySelector('#hostReading'),
   imageFileName: document.querySelector('#imageFileName'),
@@ -23,7 +25,9 @@ const elements = {
   loadingText: document.querySelector('#loadingText'),
   loadProgress: document.querySelector('#loadProgress'),
   previewCanvas: document.querySelector('#previewCanvas'),
+  previewHint: document.querySelector('#previewHint'),
   previewSurface: document.querySelector('#previewSurface'),
+  photoView: document.querySelector('#photoView'),
   sceneReading: document.querySelector('#sceneReading'),
   splatReading: document.querySelector('#splatReading'),
   statusCard: document.querySelector('#statusCard'),
@@ -40,6 +44,7 @@ const runtime = new SpatialWallpaperRuntime(elements.previewCanvas, {
 const state = {
   backgroundPath: null,
   backgroundUrl: null,
+  depthMode: false,
   generationRequest: 0,
   generatorPromise: null,
   processing: false,
@@ -135,6 +140,21 @@ function setProgress(message, progress) {
   elements.sceneReading.textContent = message
 }
 
+function setPreviewMode(mode) {
+  const depthMode = mode === 'depth'
+  if (depthMode && !state.sceneLoaded) return
+  state.depthMode = depthMode
+  runtime.setDepthMode(depthMode)
+  elements.backgroundPreview.hidden = depthMode || !state.backgroundUrl
+  elements.previewSurface.classList.toggle('is-depth-view', depthMode)
+  elements.depthKey.hidden = !depthMode
+  elements.photoView.classList.toggle('active', !depthMode)
+  elements.photoView.setAttribute('aria-pressed', String(!depthMode))
+  elements.depthView.classList.toggle('active', depthMode)
+  elements.depthView.setAttribute('aria-pressed', String(depthMode))
+  elements.previewHint.textContent = depthMode ? '亮色近景 · 暗色远景' : '窗口不捕获桌面点击'
+}
+
 function updateSettings() {
   const intensity = Number(elements.intensity.value) / 100
   const depthGain = Number(elements.depthGain.value) / 100
@@ -223,6 +243,7 @@ async function loadGeneratedScene(source, bytes, metadata, request) {
   if (request !== state.generationRequest) return
 
   state.sceneLoaded = true
+  elements.depthView.disabled = false
   elements.loadingState.hidden = true
   elements.apply.disabled = false
   elements.sceneReading.textContent = '3DGS 已就绪'
@@ -235,11 +256,13 @@ async function loadGeneratedScene(source, bytes, metadata, request) {
 
 async function generateScene(path) {
   const request = ++state.generationRequest
+  setPreviewMode('photo')
   state.processing = true
   state.sceneLoaded = false
   state.sceneSource = null
   runtime.clear()
   elements.chooseImage.disabled = true
+  elements.depthView.disabled = true
   elements.apply.disabled = true
   elements.depthBadge.hidden = true
   elements.splatReading.textContent = '—'
@@ -349,6 +372,8 @@ elements.previewSurface.addEventListener('pointermove', (event) => {
   )
 })
 elements.previewSurface.addEventListener('pointerleave', () => runtime.setPose(0, 0))
+elements.photoView.addEventListener('click', () => setPreviewMode('photo'))
+elements.depthView.addEventListener('click', () => setPreviewMode('depth'))
 elements.chooseImage.addEventListener('click', chooseImage)
 elements.apply.addEventListener('click', applyWallpaper)
 elements.stop.addEventListener('click', stopWallpaper)
