@@ -33,6 +33,7 @@ PUBLIC_FILES = {
     "/app.js": "/app.js",
     "/parallax.js": "/parallax.js",
     "/gaussian-renderer.js": "/gaussian-renderer.js",
+    "/packages/spatial-renderer/gaussian-renderer.js": "/packages/spatial-renderer/gaussian-renderer.js",
 }
 
 PLY_SCALAR_TYPES = {

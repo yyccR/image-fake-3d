@@ -1,9 +1,9 @@
-# SHARP Spatial Wallpaper Lab
+# Spatial Wallpaper Lab
 
-This local demo turns a single photo into a 3D Gaussian scene with Apple's
-SHARP research model, then renders nearby camera views in the browser. The
-phone frame and lock-screen UI remain fixed; pointer movement changes only the
-virtual camera inside the wallpaper.
+This project turns a single photo into a 3D Gaussian scene with Apple's SHARP
+research model, previews nearby camera views in the browser, and can host an
+existing Gaussian scene as an interactive macOS desktop wallpaper. Pointer or
+global cursor movement changes only the virtual camera inside the image.
 
 Unlike the previous five-plane approximation, the photo is represented by
 hundreds of thousands of 3D Gaussians with continuous position, scale,
@@ -41,10 +41,19 @@ npm run setup:sharp
 ```
 
 The setup command creates `.venv`, installs the pinned SHARP revision and the
-Gaussian conversion tool, then downloads the checkpoint to `.cache/sharp`.
-Interrupted checkpoint downloads resume automatically.
+Gaussian conversion tool, then reconstructs the checkpoint from the versioned
+GitHub Release into `.cache/sharp`. Interrupted part downloads resume
+automatically and every part plus the final checkpoint is SHA-256 verified.
+
+To download only the checkpoint:
+
+```bash
+./scripts/download-sharp-model.sh
+```
 
 ## Run
+
+### Browser generator
 
 ```bash
 npm run serve
@@ -70,6 +79,33 @@ The earlier `depth-estimator.js`, `layer-builder.js`, and `photo-renderer.js`
 prototype files remain in the folder for comparison, but `index.html` no longer
 loads them and the SHARP mode never falls back to planar layers.
 
+### macOS desktop prototype
+
+Install Rust through [rustup](https://rustup.rs/), then run:
+
+```bash
+npm install
+npm run desktop:dev
+```
+
+The desktop control window accepts `.sog`, `.spz`, or `.ply` scenes and an
+optional source image for disocclusion fallback. After **Apply to desktop**, a
+separate click-through WebGL window is placed at the macOS desktop window level
+behind Finder icons. The primary-display global cursor is normalized to
+`-1...1` and drives the shared Gaussian camera. Stopping the host or exiting the
+app immediately reveals the existing system wallpaper; the system wallpaper
+file itself is not replaced.
+
+Build the application and DMG with:
+
+```bash
+npm run desktop:build
+```
+
+This iteration supports the primary display only and does not yet persist at
+login. See [the architecture guide](docs/architecture.md) for Android, iOS,
+HarmonyOS, Windows, and replaceable scene-generator boundaries.
+
 ## Test
 
 ```bash
@@ -77,8 +113,26 @@ npm test
 ```
 
 The tests cover the pointer math, local server metadata, PLY inspection, and
-job payloads. Full SHARP inference is verified separately with a real photo
-because it requires the 2.81 GB checkpoint and MPS hardware.
+job payloads. The desktop crate adds cursor normalization and file validation
+tests. Full SHARP inference is verified separately with a real photo because it
+requires the 2.81 GB checkpoint and MPS hardware.
+
+Desktop checks:
+
+```bash
+cargo fmt --check --manifest-path apps/desktop/src-tauri/Cargo.toml
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+```
+
+## Model license
+
+The SHARP checkpoint is **not a commercial-product model**. Apple's license
+limits it to non-commercial scientific research and academic development, and
+explicitly excludes product development and use in commercial products or
+services. Redistribution in this repository's research Release includes the
+required license and attribution. Read
+[`third_party/apple-sharp/LICENSE_MODEL`](third_party/apple-sharp/LICENSE_MODEL)
+before downloading or using it.
 
 ## Measured M4 run
 

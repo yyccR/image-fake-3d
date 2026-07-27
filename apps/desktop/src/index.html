@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="把 Gaussian 三维场景应用为随鼠标移动的 macOS 空间壁纸。">
+    <title>Spatial Wallpaper Lab</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script type="module" src="/main.js"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand"><span></span>SPATIAL / WALLPAPER</div>
+        <div class="platform-pill">macOS prototype · primary display</div>
+      </header>
+
+      <section class="hero-copy">
+        <p class="eyebrow">GAUSSIAN DESKTOP ENGINE · 01</p>
+        <h1>把视角，<em>放进桌面。</em></h1>
+        <p>加载 SHARP 生成的 SOG 场景。应用后，Finder 图标保持固定，只有壁纸中的真实深度随全局鼠标位置产生视差。</p>
+      </section>
+
+      <section class="workspace">
+        <div class="preview-column">
+          <div class="display-frame" id="previewFrame">
+            <div class="display-toolbar">
+              <span class="display-dot"></span>
+              <span>LIVE DESKTOP PREVIEW</span>
+              <output id="fpsMode">按需渲染</output>
+            </div>
+            <div class="display-surface" id="previewSurface">
+              <img id="backgroundPreview" alt="壁纸原图后备层" hidden>
+              <canvas id="previewCanvas" aria-label="Gaussian 三维壁纸预览"></canvas>
+              <div class="empty-state" id="emptyState">
+                <span>01</span>
+                <strong>先加载一个 SOG 场景</strong>
+                <p>鼠标在这里移动即可预览景深；应用后会改用系统全局鼠标坐标。</p>
+              </div>
+              <div class="loading-state" id="loadingState" hidden>
+                <span class="loader"></span>
+                <strong id="loadingText">正在解析 Gaussian</strong>
+                <progress id="loadProgress" max="100" value="0"></progress>
+              </div>
+              <div class="depth-badge" id="depthBadge" hidden>
+                <span>DEPTH</span><strong id="depthReading">—</strong>
+              </div>
+            </div>
+            <div class="display-foot">
+              <span>MOVE POINTER</span>
+              <span class="display-rule"></span>
+              <span>窗口不捕获桌面点击</span>
+            </div>
+          </div>
+
+          <div class="runtime-strip">
+            <div><span>SCENE</span><strong id="sceneReading">未加载</strong></div>
+            <div><span>GAUSSIANS</span><strong id="splatReading">—</strong></div>
+            <div><span>DESKTOP HOST</span><strong id="hostReading">待机</strong></div>
+          </div>
+        </div>
+
+        <aside class="controls">
+          <div class="section-label"><span>01</span><div><small>SOURCE</small><strong>准备壁纸场景</strong></div></div>
+
+          <button class="file-card" id="chooseScene" type="button">
+            <span><small>必选 · SOG / SPZ / PLY</small><strong id="sceneFileName">选择三维场景</strong></span>
+            <b>＋</b>
+          </button>
+
+          <button class="file-card secondary" id="chooseBackground" type="button">
+            <span><small>可选 · 遮挡区后备层</small><strong id="backgroundFileName">选择原始照片</strong></span>
+            <b>＋</b>
+          </button>
+
+          <div class="section-label parameters"><span>02</span><div><small>MOTION</small><strong>控制相机幅度</strong></div></div>
+
+          <label class="range-row" for="intensity">
+            <span><strong>视差强度</strong><output id="intensityOutput">82%</output></span>
+            <input id="intensity" type="range" min="0" max="125" value="82">
+            <small><i>克制</i><i>自然</i><i>夸张</i></small>
+          </label>
+
+          <label class="range-row" for="depthGain">
+            <span><strong>深度增益</strong><output id="depthGainOutput">120%</output></span>
+            <input id="depthGain" type="range" min="50" max="180" step="5" value="120">
+            <small><i>平缓</i><i>空间</i><i>分层</i></small>
+          </label>
+
+          <div class="status-card" id="statusCard" data-state="idle" role="status" aria-live="polite">
+            <span class="status-light"></span>
+            <div><strong id="statusTitle">等待场景</strong><p id="statusMessage">先加载已经生成的 SOG 文件，验证真实桌面宿主。</p></div>
+          </div>
+
+          <div class="actions">
+            <button id="applyWallpaper" class="apply-button" type="button" disabled>
+              <span>应用到桌面</span><b>↗</b>
+            </button>
+            <button id="stopWallpaper" class="stop-button" type="button" disabled>停止壁纸</button>
+          </div>
+
+          <p class="privacy-note">场景只从本机磁盘读取。退出应用后，系统原壁纸会自动显露。</p>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

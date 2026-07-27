@@ -4,13 +4,19 @@
   "private": true,
   "description": "Local SHARP and Gaussian-splat spatial wallpaper experiment",
   "repository": "https://github.com/yyccR/image-fake-3d.git",
+  "workspaces": [
+    "apps/desktop",
+    "packages/*"
+  ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "setup:sharp": "bash scripts/setup-sharp.sh",
     "serve": "python3 sharp_server.py",
-    "test": "node --experimental-default-type=module --check app.js && node --experimental-default-type=module --check gaussian-renderer.js && python3 -m py_compile sharp_server.py && bash -n scripts/setup-sharp.sh && node --test tests/*.test.js && python3 -m unittest discover -s tests -p 'test_*.py'"
+    "desktop:dev": "npm run tauri dev --workspace @image-fake-3d/desktop",
+    "desktop:build": "npm run tauri build --workspace @image-fake-3d/desktop",
+    "test": "node --experimental-default-type=module --check app.js && node --experimental-default-type=module --check gaussian-renderer.js && node --experimental-default-type=module --check packages/spatial-renderer/runtime.js && python3 -m py_compile sharp_server.py && bash -n scripts/setup-sharp.sh && bash -n scripts/download-sharp-model.sh && node --test tests/*.test.js && python3 -m unittest discover -s tests -p 'test_*.py'"
   },
   "devDependencies": {
     "@playcanvas/splat-transform": "3.1.7"

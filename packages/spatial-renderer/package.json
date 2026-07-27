@@ -1,0 +1,14 @@
+{
+  "name": "@image-fake-3d/spatial-renderer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./runtime.js",
+    "./gaussian-renderer": "./gaussian-renderer.js"
+  },
+  "dependencies": {
+    "@sparkjsdev/spark": "2.1.0",
+    "three": "0.180.0"
+  }
+}
