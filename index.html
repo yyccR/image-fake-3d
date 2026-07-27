@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="通过鼠标移动三维虚拟相机，验证单张照片生成的 Gaussian 场景如何产生新视角。">
+  <title>2.5D 空间壁纸实验室</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+        "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/2.1.0/spark.module.js"
+      }
+    }
+  </script>
+  <script src="parallax.js" defer></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <main class="parallax-lab">
+    <header class="lab-header">
+      <a class="lab-mark" href="./" aria-label="重新载入实验">
+        <span class="lab-mark-dot"></span>
+        <span>PARALLAX / LAB</span>
+      </a>
+      <div class="lab-header-meta">
+        <span>EXPERIMENT 01</span>
+        <a href="#method">工作原理 ↓</a>
+      </div>
+    </header>
+
+    <section class="lab-intro">
+      <p class="eyebrow">MOTION PARALLAX · 2.5D WALLPAPER</p>
+      <h1>一张平面图，<em>如何骗过大脑？</em></h1>
+      <p class="intro-copy">
+        把鼠标当作手机的陀螺仪。照片先由 SHARP 重建为三维 Gaussian，再从新的相机位置实时渲染。
+      </p>
+    </section>
+
+    <section class="workbench" aria-label="2.5D 空间壁纸交互实验台">
+      <div class="demo-column">
+        <div class="phone-wrap">
+          <div class="phone-shadow" aria-hidden="true"></div>
+          <div class="phone-shell" id="phone">
+            <div class="phone-speaker" aria-hidden="true"></div>
+            <div
+              class="wallpaper-scene"
+              id="scene"
+              tabindex="0"
+              role="application"
+              aria-label="空间壁纸模拟器。移动鼠标、在触屏上拖动，或使用方向键改变观察角度。"
+            >
+              <div class="sky-wash" aria-hidden="true"></div>
+              <img class="photo-preview" id="photoPreview" hidden alt="正在转换为三维场景的照片预览">
+              <canvas class="photo-canvas" id="photoCanvas" hidden aria-label="SHARP 三维 Gaussian 场景渲染结果"></canvas>
+              <div class="scene-processing" id="sceneProcessing" hidden aria-live="polite">
+                <span></span><strong>正在生成三维场景</strong>
+              </div>
+              <div class="photo-empty" id="photoEmpty" hidden>
+                <strong>选择一张照片</strong>
+                <span>上传后在本机生成三维场景</span>
+              </div>
+
+              <svg
+                class="scene-layer layer-stars"
+                data-layer="sky"
+                data-scale="1.02"
+                viewBox="0 0 390 720"
+                preserveAspectRatio="xMidYMid slice"
+                aria-hidden="true"
+              >
+                <g class="stars">
+                  <circle cx="48" cy="116" r="1.8"></circle>
+                  <circle cx="92" cy="58" r="1.2"></circle>
+                  <circle cx="151" cy="144" r="1.5"></circle>
+                  <circle cx="219" cy="88" r="1.3"></circle>
+                  <circle cx="306" cy="54" r="1.8"></circle>
+                  <circle cx="344" cy="133" r="1.1"></circle>
+                  <path d="M266 156h14M273 149v14"></path>
+                  <path d="M75 186h10M80 181v10"></path>
+                </g>
+              </svg>
+
+              <div class="scene-layer sun-layer" data-layer="sky" data-scale="1.03" aria-hidden="true">
+                <div class="sun-disc"></div>
+                <div class="sun-orbit"></div>
+              </div>
+
+              <svg
+                class="scene-layer layer-far"
+                data-layer="far"
+                data-scale="1.08"
+                viewBox="0 0 390 720"
+                preserveAspectRatio="xMidYMid slice"
+                aria-hidden="true"
+              >
+                <path class="far-mountain-back" d="M-35 445 58 276l55 102 66-164 53 109 48-77 143 199v310H-35Z"></path>
+                <path class="far-mountain-front" d="M-28 488 48 360l58 64 75-147 55 123 59-106 121 166v295H-28Z"></path>
+                <path class="snow" d="m163 313 18-36 16 36 12-10 27 97-55-123-75 147 45-87Z"></path>
+                <path class="snow" d="m279 324 16-30 20 27 30 59-50-86-59 106 30-61Z"></path>
+              </svg>
+
+              <svg
+                class="scene-layer layer-middle"
+                data-layer="middle"
+                data-scale="1.1"
+                viewBox="0 0 390 720"
+                preserveAspectRatio="xMidYMid slice"
+                aria-hidden="true"
+              >
+                <path class="middle-ridge" d="M-40 488c46-42 83-48 126-21 44 27 75 19 111-8 55-40 105-31 154 10 24 20 49 27 79 22v264H-40Z"></path>
+                <g class="middle-trees">
+                  <path d="m44 438-20 72h40Z"></path>
+                  <path d="m75 448-24 83h48Z"></path>
+                  <path d="m105 435-22 81h44Z"></path>
+                  <path d="m276 430-27 96h54Z"></path>
+                  <path d="m314 442-23 85h46Z"></path>
+                  <path d="m347 422-27 99h54Z"></path>
+                </g>
+                <path class="river" d="M122 512c56 7 97 2 140-10-24 35-40 63-43 96-4 43 20 80 49 157H104c29-82 46-123 42-158-3-29-13-55-24-85Z"></path>
+              </svg>
+
+              <svg
+                class="scene-layer layer-near"
+                data-layer="near"
+                data-scale="1.12"
+                viewBox="0 0 390 720"
+                preserveAspectRatio="xMidYMid slice"
+                aria-hidden="true"
+              >
+                <path class="near-hill" d="M-48 562c57-50 121-62 184-20 33 22 62 19 102-9 59-42 121-25 200 31v201H-48Z"></path>
+                <g class="near-pines">
+                  <path d="m20 474-38 135h76Z"></path>
+                  <path d="m62 492-33 121h66Z"></path>
+                  <path d="m337 468-40 142h80Z"></path>
+                  <path d="m382 493-34 122h68Z"></path>
+                </g>
+                <g class="foreground-plants">
+                  <path d="M92 720c4-62 2-112-14-161M78 598l-22-24M81 622l24-31"></path>
+                  <path d="M303 720c-2-65 2-117 21-165M319 596l23-26M316 623l-25-28"></path>
+                  <circle cx="56" cy="573" r="8"></circle>
+                  <circle cx="105" cy="589" r="7"></circle>
+                  <circle cx="342" cy="570" r="8"></circle>
+                  <circle cx="291" cy="595" r="7"></circle>
+                </g>
+              </svg>
+
+              <div class="lock-ui" aria-hidden="true">
+                <div class="lock-date" id="lockDate">7月27日 星期一</div>
+                <div class="lock-time" id="lockTime">09:41</div>
+              </div>
+
+              <div class="depth-key" id="depthKey" hidden aria-hidden="true">
+                <span>远</span>
+                <div class="depth-gradient"></div>
+                <span>近</span>
+              </div>
+
+              <div class="scene-hint">
+                <span>MOVE POINTER</span>
+                <span class="hint-line"></span>
+                <span>仅移动壁纸内容</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="keyboard-note">鼠标悬停移动 · 方向键微调 · 触屏拖动同样有效</p>
+      </div>
+
+      <aside class="control-panel" aria-label="实验参数">
+        <div class="panel-heading">
+          <span class="panel-index">01</span>
+          <div>
+            <p>RENDER MODE</p>
+            <h2>查看系统眼中的场景</h2>
+          </div>
+        </div>
+
+        <div class="segmented-control" role="group" aria-label="显示模式">
+          <button id="vectorMode" class="active" type="button" aria-pressed="true">示意图层</button>
+          <button id="photoMode" type="button" aria-pressed="false">3D 场景</button>
+          <button id="depthMode" type="button" aria-pressed="false" disabled>深度验证</button>
+        </div>
+
+        <div class="photo-inputs" id="photoInputs">
+          <label class="file-action" for="photoInput">
+            <span>选择照片</span><strong>必选</strong>
+            <input id="photoInput" type="file" accept="image/png,image/jpeg,image/webp,image/avif">
+          </label>
+          <label class="file-action" id="splatAction" for="splatInput">
+            <span>加载三维场景</span><strong>PLY / SOG / SPZ</strong>
+            <input id="splatInput" type="file" accept=".ply,.sog,.spz">
+          </label>
+        </div>
+        <div class="model-state" id="modelState" data-state="idle" aria-live="polite">
+          <span class="model-state-dot" aria-hidden="true"></span>
+          <div>
+            <strong>APPLE SHARP · 3D GAUSSIANS</strong>
+            <span id="modelStatus">正在检查本地三维模型</span>
+          </div>
+          <progress id="modelProgress" max="100" value="0" hidden aria-label="三维场景生成进度"></progress>
+        </div>
+        <p class="photo-status" id="photoStatus" role="status" aria-live="polite">照片仅发送到本机 SHARP 服务，推理结果不会离开电脑。</p>
+
+        <label class="range-control" for="intensity">
+          <span>
+            <strong>视差强度</strong>
+            <output id="intensityOutput" for="intensity">82%</output>
+          </span>
+          <input id="intensity" type="range" min="0" max="125" step="1" value="82">
+          <span class="range-scale"><i>0</i><i>自然</i><i>夸张</i></span>
+        </label>
+
+        <label class="range-control depth-gain-control" for="depthGain">
+          <span>
+            <strong>深度视差增益</strong>
+            <output id="depthGainOutput" for="depthGain">120%</output>
+          </span>
+          <input id="depthGain" type="range" min="50" max="180" step="5" value="120">
+          <span class="range-scale"><i>克制</i><i>空间</i><i>强调分层</i></span>
+        </label>
+
+        <div class="action-row">
+          <button id="autoMode" type="button" class="primary-action" aria-pressed="false">
+            <span>启动自动演示</span><span aria-hidden="true">→</span>
+          </button>
+          <button id="reset" type="button" class="reset-action">复位</button>
+        </div>
+        <p class="motion-preference" id="motionPreference" hidden>系统已启用“减少动态效果”，自动演示因此关闭。</p>
+
+        <section class="depth-panel" aria-labelledby="depth-title">
+          <div class="depth-panel-title">
+            <span class="panel-index">02</span>
+            <div>
+              <p>VIRTUAL CAMERA</p>
+              <h2 id="depth-title">移动相机，重新投影场景</h2>
+            </div>
+          </div>
+
+          <div class="layer-list">
+            <div class="layer-row" data-reading="sky">
+              <div class="layer-name"><span class="swatch swatch-sky"></span><strong>相机横移</strong></div>
+              <span class="depth-value">CAM X</span>
+              <div class="shift-track" aria-hidden="true"><span></span></div>
+              <output id="cameraXOutput">0.0%</output>
+            </div>
+            <div class="layer-row" data-reading="far">
+              <div class="layer-name"><span class="swatch swatch-far"></span><strong>相机纵移</strong></div>
+              <span class="depth-value">CAM Y</span>
+              <div class="shift-track" aria-hidden="true"><span></span></div>
+              <output id="cameraYOutput">0.0%</output>
+            </div>
+            <div class="layer-row" data-reading="middle">
+              <div class="layer-name"><span class="swatch swatch-middle"></span><strong>场景表示</strong></div>
+              <span class="depth-value">3DGS</span>
+              <div class="shift-track" aria-hidden="true"><span></span></div>
+              <output id="sceneTypeOutput">等待照片</output>
+            </div>
+            <div class="layer-row" data-reading="depth-range">
+              <div class="layer-name"><span class="swatch swatch-depth"></span><strong>深度范围</strong></div>
+              <span class="depth-value">P10→P90</span>
+              <div class="shift-track depth-track" aria-hidden="true"><span></span></div>
+              <output id="depthRangeOutput">—</output>
+            </div>
+            <div class="layer-row" data-reading="depth-ratio">
+              <div class="layer-name"><span class="swatch swatch-focus"></span><strong>前后比值</strong></div>
+              <span class="depth-value">FAR/NEAR</span>
+              <div class="shift-track depth-track" aria-hidden="true"><span></span></div>
+              <output id="depthRatioOutput">—</output>
+            </div>
+            <div class="layer-row" data-reading="parallax">
+              <div class="layer-name"><span class="swatch swatch-parallax"></span><strong>层间位移</strong></div>
+              <span class="depth-value">Δ PX</span>
+              <div class="shift-track depth-track" aria-hidden="true"><span></span></div>
+              <output id="parallaxPxOutput">—</output>
+            </div>
+            <div class="layer-row" data-reading="near">
+              <div class="layer-name"><span class="swatch swatch-near"></span><strong>Gaussian</strong></div>
+              <span class="depth-value">COUNT</span>
+              <div class="shift-track" aria-hidden="true"><span></span></div>
+              <output id="splatCountOutput">—</output>
+            </div>
+          </div>
+
+          <div class="formula-strip" aria-label="新的观察位置通过三维场景重新投影成屏幕像素">
+            <span>pixel shift</span><strong>∝</strong><span>camera move</span><strong>×</strong><span>1 / depth</span>
+          </div>
+        </section>
+
+        <section class="observation-note" aria-labelledby="observe-title">
+          <p>WHAT TO NOTICE</p>
+          <h2 id="observe-title">验证三个现象</h2>
+          <ol>
+            <li><span>01</span>手机外框和时钟固定，只有壁纸内容产生位移。</li>
+            <li><span>02</span>人物、地面和远景按连续深度产生不同视差，不再被压进五张平面贴图。</li>
+            <li><span>03</span>SHARP 的后层 Gaussian 先补遮挡区，剩余裂隙再由固定的原图后备层兜底。</li>
+          </ol>
+        </section>
+      </aside>
+    </section>
+
+    <footer class="lab-footer" id="method">
+      <span>2D IMAGE</span><span class="footer-arrow">→</span>
+      <span>SHARP INFERENCE</span><span class="footer-arrow">→</span>
+      <span>3D GAUSSIANS</span><span class="footer-arrow">→</span>
+      <span>NOVEL VIEW</span>
+    </footer>
+  </main>
+</body>
+</html>

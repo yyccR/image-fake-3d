@@ -1,0 +1,18 @@
+{
+  "name": "image-3d-parallax-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local SHARP and Gaussian-splat spatial wallpaper experiment",
+  "repository": "https://github.com/yyccR/image-fake-3d.git",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "setup:sharp": "bash scripts/setup-sharp.sh",
+    "serve": "python3 sharp_server.py",
+    "test": "node --experimental-default-type=module --check app.js && node --experimental-default-type=module --check gaussian-renderer.js && python3 -m py_compile sharp_server.py && bash -n scripts/setup-sharp.sh && node --test tests/*.test.js && python3 -m unittest discover -s tests -p 'test_*.py'"
+  },
+  "devDependencies": {
+    "@playcanvas/splat-transform": "3.1.7"
+  }
+}

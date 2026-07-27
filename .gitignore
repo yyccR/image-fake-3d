@@ -1,0 +1,13 @@
+.cache/
+.venv/
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
+.env
+.env.*
+*.ply
+*.sog
+*.spz
+*.compressed.ply
+npm-debug.log*
