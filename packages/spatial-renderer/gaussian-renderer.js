@@ -50,6 +50,7 @@ export class GaussianSceneRenderer {
     this.sourceHeight = 2340
     this.focalPx = 1700
     this.pixelRatioCap = options.pixelRatioCap || 2
+    this.hasSourceCamera = false
   }
 
   setCameraMetadata({ width = 1080, height = 2340, focalPx = 1700 } = {}) {
@@ -72,7 +73,12 @@ export class GaussianSceneRenderer {
 
   async load(bytes, metadata = {}, onProgress) {
     this.disposeScene()
-    this.setCameraMetadata(metadata)
+    this.hasSourceCamera = Number.isFinite(metadata.focalPx)
+    if (this.hasSourceCamera) {
+      this.setCameraMetadata(metadata)
+    } else {
+      this.updateGenericProjection()
+    }
 
     const fileName = metadata.fileName || 'scene.sog'
     const mesh = new SplatMesh({
@@ -99,8 +105,7 @@ export class GaussianSceneRenderer {
     const center = bounds.getCenter(new THREE.Vector3())
     const size = bounds.getSize(new THREE.Vector3())
     const rotatedCenter = center.clone().applyQuaternion(mesh.quaternion)
-    const hasSourceCamera = Number.isFinite(metadata.focalPx)
-    if (hasSourceCamera) {
+    if (this.hasSourceCamera) {
       const depthStats = this.resolveDepthStats(mesh, metadata, rotatedCenter, size)
       this.nearDepth = depthStats.near
       this.focusDepth = depthStats.focus
@@ -217,8 +222,18 @@ export class GaussianSceneRenderer {
     const height = Math.max(1, Math.round(this.canvas.clientHeight * ratio))
     if (this.canvas.width !== width || this.canvas.height !== height) {
       this.renderer.setSize(width, height, false)
-      this.updateProjection(width / height)
+      if (this.hasSourceCamera) {
+        this.updateProjection(width / height)
+      } else {
+        this.updateGenericProjection(width / height)
+      }
     }
+  }
+
+  updateGenericProjection(aspect = this.canvas.clientWidth / Math.max(1, this.canvas.clientHeight)) {
+    this.camera.fov = 50
+    this.camera.aspect = Math.max(0.1, aspect)
+    this.camera.updateProjectionMatrix()
   }
 
   render(reducedMotion = false) {

@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import { readFile } from '@tauri-apps/plugin-fs'
 import { SpatialWallpaperRuntime } from '@image-fake-3d/spatial-renderer'
+import { cameraMetadataFromImage } from '@image-fake-3d/spatial-renderer/projection'
 
 const elements = {
   apply: document.querySelector('#applyWallpaper'),
@@ -38,8 +39,11 @@ const runtime = new SpatialWallpaperRuntime(elements.previewCanvas, {
 })
 
 const state = {
+  backgroundMetadata: null,
   backgroundPath: null,
   backgroundUrl: null,
+  loadRequest: 0,
+  sceneBytes: null,
   sceneLoaded: false,
   scenePath: null,
   wallpaperRunning: false,
@@ -60,6 +64,15 @@ function mimeType(path) {
       : 'image/jpeg'
 }
 
+function readImageMetadata(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(cameraMetadataFromImage(image.naturalWidth, image.naturalHeight))
+    image.onerror = () => reject(new Error('无法读取原图尺寸。'))
+    image.src = url
+  })
+}
+
 function setStatus(status, title, message) {
   elements.statusCard.dataset.state = status
   elements.statusTitle.textContent = title
@@ -78,6 +91,55 @@ function updateSettings() {
   }
 }
 
+async function loadPreviewScene(path, bytes, calibrated = false) {
+  const request = ++state.loadRequest
+  state.sceneBytes = bytes
+  state.sceneLoaded = false
+  elements.apply.disabled = true
+  elements.emptyState.hidden = true
+  elements.loadingState.hidden = false
+  elements.loadProgress.value = 0
+  elements.loadingText.textContent = calibrated ? '正在校准 Gaussian 投影' : '正在解析 Gaussian'
+  elements.sceneFileName.textContent = fileName(path)
+  elements.sceneReading.textContent = '解析中'
+  setStatus(
+    'loading',
+    calibrated ? '正在校准全屏投影' : '正在构建三维场景',
+    calibrated ? '使用原图宽高和 SHARP 相机参数重新对齐 Gaussian。' : '首次加载需要解析并上传 Gaussian 到 GPU。',
+  )
+
+  try {
+    const count = await runtime.load(
+      arrayBuffer(bytes),
+      { fileName: fileName(path), ...state.backgroundMetadata },
+      (progress) => {
+        elements.loadProgress.value = progress * 100
+        elements.loadingText.textContent = `正在解析 Gaussian · ${Math.round(progress * 100)}%`
+      },
+    )
+    if (request !== state.loadRequest) return
+    state.sceneLoaded = true
+    elements.loadingState.hidden = true
+    elements.apply.disabled = false
+    elements.sceneReading.textContent = '3DGS 已就绪'
+    elements.splatReading.textContent = count ? `${Math.round(count / 1000)}K` : 'READY'
+    const depth = runtime.getDepthMetrics()
+    elements.depthBadge.hidden = false
+    elements.depthReading.textContent = `${depth.near.toFixed(1)} → ${depth.far.toFixed(1)}`
+    setStatus(
+      'ready',
+      calibrated ? '全屏投影已经对齐' : '场景可以应用',
+      '在预览区域移动鼠标，确认整个画面都有景深后应用到主显示器。',
+    )
+  } catch (error) {
+    if (request !== state.loadRequest) return
+    elements.loadingState.hidden = true
+    elements.emptyState.hidden = false
+    elements.sceneReading.textContent = '读取失败'
+    setStatus('error', '无法加载场景', error.message || String(error))
+  }
+}
+
 async function chooseScene() {
   const path = await open({
     multiple: false,
@@ -87,39 +149,14 @@ async function chooseScene() {
   if (!path) return
 
   state.scenePath = path
-  state.sceneLoaded = false
-  elements.apply.disabled = true
-  elements.emptyState.hidden = true
-  elements.loadingState.hidden = false
-  elements.sceneFileName.textContent = fileName(path)
-  elements.sceneReading.textContent = '解析中'
-  setStatus('loading', '正在构建三维场景', '首次加载需要解析并上传 Gaussian 到 GPU。')
-
   try {
     const bytes = await readFile(path)
-    const count = await runtime.load(
-      arrayBuffer(bytes),
-      { fileName: fileName(path) },
-      (progress) => {
-        elements.loadProgress.value = progress * 100
-        elements.loadingText.textContent = `正在解析 Gaussian · ${Math.round(progress * 100)}%`
-      },
-    )
-    state.sceneLoaded = true
-    elements.loadingState.hidden = true
-    elements.apply.disabled = false
-    elements.sceneReading.textContent = '3DGS 已就绪'
-    elements.splatReading.textContent = count ? `${Math.round(count / 1000)}K` : 'READY'
-    const depth = runtime.getDepthMetrics()
-    elements.depthBadge.hidden = false
-    elements.depthReading.textContent = `${depth.near.toFixed(1)} → ${depth.far.toFixed(1)}`
-    setStatus('ready', '场景可以应用', '在预览区域移动鼠标，确认幅度后应用到主显示器。')
+    await loadPreviewScene(path, bytes, Boolean(state.backgroundMetadata))
   } catch (error) {
     state.scenePath = null
-    elements.loadingState.hidden = true
-    elements.emptyState.hidden = false
+    state.sceneBytes = null
     elements.sceneReading.textContent = '读取失败'
-    setStatus('error', '无法加载场景', error.message || String(error))
+    setStatus('error', '无法读取场景', error.message || String(error))
   }
 }
 
@@ -132,12 +169,19 @@ async function chooseBackground() {
   if (!path) return
 
   const bytes = await readFile(path)
+  const nextUrl = URL.createObjectURL(new Blob([bytes], { type: mimeType(path) }))
+  const metadata = await readImageMetadata(nextUrl)
   if (state.backgroundUrl) URL.revokeObjectURL(state.backgroundUrl)
   state.backgroundPath = path
-  state.backgroundUrl = URL.createObjectURL(new Blob([bytes], { type: mimeType(path) }))
+  state.backgroundUrl = nextUrl
+  state.backgroundMetadata = metadata
   elements.backgroundPreview.src = state.backgroundUrl
   elements.backgroundPreview.hidden = false
   elements.backgroundFileName.textContent = fileName(path)
+
+  if (state.sceneBytes && state.scenePath) {
+    await loadPreviewScene(state.scenePath, state.sceneBytes, true)
+  }
 }
 
 async function applyWallpaper() {
@@ -190,7 +234,11 @@ await listen('wallpaper-status', ({ payload }) => {
     elements.hostReading.textContent = '桌面运行中'
     elements.stop.disabled = false
     elements.apply.disabled = false
-    setStatus('running', '桌面景深正在运行', '移动全局鼠标即可改变壁纸视角；Finder 图标保持可点击。')
+    setStatus(
+      'running',
+      '桌面景深正在运行',
+      payload.message || '移动全局鼠标即可改变壁纸视角；Finder 图标保持可点击。',
+    )
   } else if (payload.state === 'error') {
     state.wallpaperRunning = false
     elements.hostReading.textContent = '启动失败'

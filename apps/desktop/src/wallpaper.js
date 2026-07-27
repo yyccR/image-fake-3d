@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { readFile } from '@tauri-apps/plugin-fs'
 import { SpatialWallpaperRuntime } from '@image-fake-3d/spatial-renderer'
+import { cameraMetadataFromImage } from '@image-fake-3d/spatial-renderer/projection'
 
 const canvas = document.querySelector('#wallpaperCanvas')
 const background = document.querySelector('#background')
@@ -27,10 +28,16 @@ function mimeType(path) {
 }
 
 async function loadBackground(path) {
-  if (!path) return
+  if (!path) return {}
   const bytes = await readFile(path)
+  const loaded = new Promise((resolve, reject) => {
+    background.onload = resolve
+    background.onerror = () => reject(new Error('无法读取原图尺寸。'))
+  })
   background.src = URL.createObjectURL(new Blob([bytes], { type: mimeType(path) }))
+  await loaded
   background.hidden = false
+  return cameraMetadataFromImage(background.naturalWidth, background.naturalHeight)
 }
 
 async function start() {
@@ -38,9 +45,12 @@ async function start() {
   runtime.setIntensity(config.intensity)
   runtime.setDepthGain(config.depthGain)
 
-  await loadBackground(config.backgroundPath)
+  const sourceMetadata = await loadBackground(config.backgroundPath)
   const bytes = await readFile(config.scenePath)
-  await runtime.load(arrayBuffer(bytes), { fileName: fileName(config.scenePath) })
+  await runtime.load(arrayBuffer(bytes), {
+    fileName: fileName(config.scenePath),
+    ...sourceMetadata,
+  })
 
   await listen('wallpaper-cursor', ({ payload }) => runtime.setPose(payload.x, payload.y))
   await listen('wallpaper-settings', ({ payload }) => {

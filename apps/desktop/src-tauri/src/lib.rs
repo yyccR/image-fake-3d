@@ -76,6 +76,9 @@ fn apply_wallpaper(
         .primary_monitor()
         .map_err(|error| error.to_string())?
         .ok_or("没有检测到主显示器。")?;
+    let scale_factor = monitor.scale_factor();
+    let logical_position = monitor.position().to_logical::<f64>(scale_factor);
+    let logical_size = monitor.size().to_logical::<f64>(scale_factor);
     let window = WebviewWindowBuilder::new(
         &app,
         WALLPAPER_LABEL,
@@ -89,21 +92,12 @@ fn apply_wallpaper(
     .shadow(false)
     .always_on_bottom(true)
     .visible(false)
+    .position(logical_position.x, logical_position.y)
+    .inner_size(logical_size.width, logical_size.height)
     .build()
     .map_err(|error| error.to_string())?;
 
-    window
-        .set_position(Position::Physical(PhysicalPosition::new(
-            monitor.position().x,
-            monitor.position().y,
-        )))
-        .map_err(|error| error.to_string())?;
-    window
-        .set_size(Size::Physical(PhysicalSize::new(
-            monitor.size().width,
-            monitor.size().height,
-        )))
-        .map_err(|error| error.to_string())?;
+    fit_wallpaper_to_primary_monitor(&app, &window)?;
     window
         .set_ignore_cursor_events(true)
         .map_err(|error| error.to_string())?;
@@ -154,7 +148,10 @@ fn wallpaper_ready(app: AppHandle, state: State<'_, WallpaperState>) -> Result<(
         .get_webview_window(WALLPAPER_LABEL)
         .ok_or("壁纸窗口不存在。")?;
     window.show().map_err(|error| error.to_string())?;
+    fit_wallpaper_to_primary_monitor(&app, &window)?;
     order_desktop_window_back(&window)?;
+
+    let surface_message = wallpaper_surface_description(&app, &window).ok();
 
     let generation = state.cursor_generation.fetch_add(1, Ordering::SeqCst) + 1;
     start_cursor_loop(
@@ -167,7 +164,7 @@ fn wallpaper_ready(app: AppHandle, state: State<'_, WallpaperState>) -> Result<(
         "wallpaper-status",
         StatusPayload {
             state: "running".into(),
-            message: None,
+            message: surface_message,
         },
     )
     .map_err(|error| error.to_string())
@@ -217,6 +214,42 @@ fn validate_file(path: &str, allowed_extensions: &[&str]) -> Result<String, Stri
         return Err(format!("不支持的文件格式：.{extension}"));
     }
     Ok(path.to_string())
+}
+
+fn fit_wallpaper_to_primary_monitor(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
+    let monitor = app
+        .primary_monitor()
+        .map_err(|error| error.to_string())?
+        .ok_or("没有检测到主显示器。")?;
+    window
+        .set_position(Position::Physical(PhysicalPosition::new(
+            monitor.position().x,
+            monitor.position().y,
+        )))
+        .map_err(|error| error.to_string())?;
+    window
+        .set_size(Size::Physical(PhysicalSize::new(
+            monitor.size().width,
+            monitor.size().height,
+        )))
+        .map_err(|error| error.to_string())
+}
+
+fn wallpaper_surface_description(
+    app: &AppHandle,
+    window: &WebviewWindow,
+) -> Result<String, String> {
+    let monitor = app
+        .primary_monitor()
+        .map_err(|error| error.to_string())?
+        .ok_or("没有检测到主显示器。")?;
+    let size = window.inner_size().map_err(|error| error.to_string())?;
+    Ok(format!(
+        "全屏画布 {}×{} px · Retina {:.1}x；移动鼠标可改变整个画面的视角。",
+        size.width,
+        size.height,
+        monitor.scale_factor(),
+    ))
 }
 
 fn start_cursor_loop(app: AppHandle, generation: u64, current_generation: Arc<AtomicU64>) {
