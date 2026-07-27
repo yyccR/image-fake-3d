@@ -35,6 +35,12 @@ PUBLIC_FILES = {
     "/gaussian-renderer.js": "/gaussian-renderer.js",
     "/packages/spatial-renderer/gaussian-renderer.js": "/packages/spatial-renderer/gaussian-renderer.js",
 }
+DESKTOP_ORIGINS = {
+    "tauri://localhost",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "http://localhost:1420",
+}
 
 PLY_SCALAR_TYPES = {
     "char": ("b", 1),
@@ -77,6 +83,10 @@ def runtime_status() -> dict[str, object]:
 
 def public_file_for_path(path: str) -> str | None:
     return PUBLIC_FILES.get(path)
+
+
+def is_desktop_origin(origin: str | None) -> bool:
+    return origin in DESKTOP_ORIGINS
 
 
 @dataclass
@@ -328,9 +338,16 @@ class SharpRequestHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
     def end_headers(self) -> None:
+        origin = self.headers.get("Origin")
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        if is_desktop_origin(origin):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Private-Network", "true")
+            self.send_header("Vary", "Origin")
+            self.send_header("Cross-Origin-Resource-Policy", "cross-origin")
+        else:
+            self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; "
@@ -341,6 +358,22 @@ class SharpRequestHandler(SimpleHTTPRequestHandler):
             "object-src 'none'; base-uri 'none'",
         )
         super().end_headers()
+
+    def do_OPTIONS(self) -> None:
+        if not urlparse(self.path).path.startswith("/api/"):
+            self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+            return
+        if not is_desktop_origin(self.headers.get("Origin")):
+            self.send_error(HTTPStatus.FORBIDDEN, "Origin not allowed")
+            return
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, X-Image-Width, X-Image-Height",
+        )
+        self.send_header("Access-Control-Max-Age", "600")
+        self.end_headers()
 
     def send_json(self, payload: dict[str, object], status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

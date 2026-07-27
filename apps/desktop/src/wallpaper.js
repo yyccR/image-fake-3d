@@ -20,6 +20,17 @@ function arrayBuffer(view) {
   return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength)
 }
 
+function isGeneratedScene(source) {
+  return source.startsWith('http://127.0.0.1:4173/api/jobs/') && source.endsWith('/result')
+}
+
+async function loadScene(source) {
+  if (!isGeneratedScene(source)) return readFile(source)
+  const response = await fetch(source, { cache: 'no-store' })
+  if (!response.ok) throw new Error('无法读取本机生成的三维场景。')
+  return new Uint8Array(await response.arrayBuffer())
+}
+
 function mimeType(path) {
   const extension = path.split('.').pop()?.toLowerCase()
   return extension === 'png' ? 'image/png'
@@ -46,9 +57,9 @@ async function start() {
   runtime.setDepthGain(config.depthGain)
 
   const sourceMetadata = await loadBackground(config.backgroundPath)
-  const bytes = await readFile(config.scenePath)
+  const bytes = await loadScene(config.scenePath)
   await runtime.load(arrayBuffer(bytes), {
-    fileName: fileName(config.scenePath),
+    fileName: isGeneratedScene(config.scenePath) ? 'scene.sog' : fileName(config.scenePath),
     ...sourceMetadata,
   })
 

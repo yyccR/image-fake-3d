@@ -254,11 +254,13 @@ export class GaussianSceneRenderer {
   }
 
   disposeScene() {
-    if (!this.mesh) return
-    this.scene.remove(this.mesh)
-    this.mesh.dispose()
-    this.mesh = null
+    if (this.mesh) {
+      this.scene.remove(this.mesh)
+      this.mesh.dispose()
+      this.mesh = null
+    }
     this.loaded = false
+    this.renderer.clear()
   }
 
   dispose() {

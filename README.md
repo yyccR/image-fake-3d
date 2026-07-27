@@ -88,13 +88,14 @@ npm install
 npm run desktop:dev
 ```
 
-The desktop control window accepts `.sog`, `.spz`, or `.ply` scenes and an
-optional source image for disocclusion fallback. After **Apply to desktop**, a
-separate click-through WebGL window is placed at the macOS desktop window level
-behind Finder icons. The primary-display global cursor is normalized to
-`-1...1` and drives the shared Gaussian camera. Stopping the host or exiting the
-app immediately reveals the existing system wallpaper; the system wallpaper
-file itself is not replaced.
+The desktop control window accepts one JPEG, PNG, or WebP photo. It starts the
+local SHARP service, removes EXIF, runs MPS inference, converts the result to an
+internal SOG scene, and loads the source photo as a disocclusion fallback. The
+user never needs to select a scene file. After **Apply to desktop**, a separate
+click-through WebGL window is placed behind Finder icons. The primary-display
+global cursor is normalized to `-1...1` and drives the shared Gaussian camera.
+Stopping the host or exiting the app immediately reveals the existing system
+wallpaper; the system wallpaper file itself is not replaced.
 
 Build the application and DMG with:
 

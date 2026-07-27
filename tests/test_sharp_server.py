@@ -19,6 +19,12 @@ class SharpServerTests(unittest.TestCase):
         self.assertIn("checks", status)
         self.assertEqual(status["targetSplats"], sharp_server.TARGET_SPLATS)
 
+    def test_desktop_origin_allowlist(self):
+        self.assertTrue(sharp_server.is_desktop_origin("tauri://localhost"))
+        self.assertTrue(sharp_server.is_desktop_origin("http://localhost:1420"))
+        self.assertFalse(sharp_server.is_desktop_origin("https://example.com"))
+        self.assertFalse(sharp_server.is_desktop_origin(None))
+
     def test_default_focal_length_matches_sharp_formula(self):
         focal = sharp_server.focal_length_px(1080, 2347)
         self.assertAlmostEqual(focal, 1791.38, places=1)

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="把 Gaussian 三维场景应用为随鼠标移动的 macOS 空间壁纸。">
+    <meta name="description" content="把一张照片转换为随鼠标移动的 macOS 空间壁纸。">
     <title>Spatial Wallpaper Lab</title>
     <link rel="stylesheet" href="/styles.css">
     <script type="module" src="/main.js"></script>
@@ -18,7 +18,7 @@
       <section class="hero-copy">
         <p class="eyebrow">GAUSSIAN DESKTOP ENGINE · 01</p>
         <h1>把视角，<em>放进桌面。</em></h1>
-        <p>加载 SHARP 生成的 SOG 场景。应用后，Finder 图标保持固定，只有壁纸中的真实深度随全局鼠标位置产生视差。</p>
+        <p>只需选择一张照片。本机模型会自动重建真实深度并生成空间壁纸；应用后 Finder 图标保持固定，画面随全局鼠标位置产生视差。</p>
       </section>
 
       <section class="workspace">
@@ -34,12 +34,12 @@
               <canvas id="previewCanvas" aria-label="Gaussian 三维壁纸预览"></canvas>
               <div class="empty-state" id="emptyState">
                 <span>01</span>
-                <strong>先加载一个 SOG 场景</strong>
-                <p>鼠标在这里移动即可预览景深；应用后会改用系统全局鼠标坐标。</p>
+                <strong>选择一张原始照片</strong>
+                <p>应用会在本机自动生成三维 Gaussian；处理完成后，可用鼠标直接预览景深。</p>
               </div>
               <div class="loading-state" id="loadingState" hidden>
                 <span class="loader"></span>
-                <strong id="loadingText">正在解析 Gaussian</strong>
+                <strong id="loadingText">正在准备本机模型</strong>
                 <progress id="loadProgress" max="100" value="0"></progress>
               </div>
               <div class="depth-badge" id="depthBadge" hidden>
@@ -61,15 +61,10 @@
         </div>
 
         <aside class="controls">
-          <div class="section-label"><span>01</span><div><small>SOURCE</small><strong>准备壁纸场景</strong></div></div>
+          <div class="section-label"><span>01</span><div><small>SOURCE</small><strong>选择一张原始照片</strong></div></div>
 
-          <button class="file-card" id="chooseScene" type="button">
-            <span><small>必选 · SOG / SPZ / PLY</small><strong id="sceneFileName">选择三维场景</strong></span>
-            <b>＋</b>
-          </button>
-
-          <button class="file-card secondary" id="chooseBackground" type="button">
-            <span><small>可选 · 遮挡区后备层</small><strong id="backgroundFileName">选择原始照片</strong></span>
+          <button class="file-card" id="chooseImage" type="button">
+            <span><small>JPEG / PNG / WEBP</small><strong id="imageFileName">选择照片并自动生成</strong></span>
             <b>＋</b>
           </button>
 
@@ -89,7 +84,7 @@
 
           <div class="status-card" id="statusCard" data-state="idle" role="status" aria-live="polite">
             <span class="status-light"></span>
-            <div><strong id="statusTitle">等待场景</strong><p id="statusMessage">先加载已经生成的 SOG 文件，验证真实桌面宿主。</p></div>
+            <div><strong id="statusTitle">正在检查本机模型</strong><p id="statusMessage">准备照片到空间壁纸的自动处理管线。</p></div>
           </div>
 
           <div class="actions">
@@ -99,7 +94,7 @@
             <button id="stopWallpaper" class="stop-button" type="button" disabled>停止壁纸</button>
           </div>
 
-          <p class="privacy-note">场景只从本机磁盘读取。退出应用后，系统原壁纸会自动显露。</p>
+          <p class="privacy-note">照片和生成场景都只保留在本机。SOG 是内部格式，不需要手动上传；退出应用后系统原壁纸会自动显露。</p>
         </aside>
       </section>
     </main>

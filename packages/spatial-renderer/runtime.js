@@ -41,6 +41,11 @@ export class SpatialWallpaperRuntime {
     return this.renderer.getDepthMetrics()
   }
 
+  clear() {
+    this.renderer.disposeScene()
+    this.scheduleFrame()
+  }
+
   scheduleFrame() {
     if (!this.frameId && !this.disposed && !document.hidden) {
       this.frameId = window.requestAnimationFrame(() => this.render())

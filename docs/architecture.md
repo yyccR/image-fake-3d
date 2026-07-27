@@ -96,8 +96,9 @@ messages and stores SOG/source assets in its own sandbox.
 ```text
 Control window
   -> native file picker grants a local file scope
-  -> preview loads SOG into the shared renderer
-  -> apply_wallpaper validates paths and creates a hidden desktop WebView
+  -> local SceneGenerator turns the photo into an internal SOG
+  -> preview loads SOG into the shared renderer with the source fallback
+  -> apply_wallpaper validates the local result URL and creates a hidden desktop WebView
   -> wallpaper WebView loads the scene and reports ready
   -> native host reveals the window behind Finder icons
   -> global cursor is normalized to -1...1 and emitted on change

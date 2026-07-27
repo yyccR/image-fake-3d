@@ -1,5 +1,7 @@
 use std::{
+    env,
     path::PathBuf,
+    process::{Child, Command, Stdio},
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -15,6 +17,7 @@ use tauri::{
 };
 
 const WALLPAPER_LABEL: &str = "wallpaper";
+const GENERATOR_BASE_URL: &str = "http://127.0.0.1:4173/api/jobs/";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,13 +54,60 @@ struct WallpaperState {
     cursor_generation: Arc<AtomicU64>,
 }
 
+#[derive(Default)]
+struct GeneratorState {
+    child: Mutex<Option<Child>>,
+}
+
+impl Drop for GeneratorState {
+    fn drop(&mut self) {
+        if let Ok(child) = self.child.get_mut()
+            && let Some(child) = child.as_mut()
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+#[tauri::command]
+fn start_scene_generator(state: State<'_, GeneratorState>) -> Result<(), String> {
+    let mut child = state.child.lock().map_err(|_| "模型服务状态锁异常。")?;
+    if let Some(process) = child.as_mut() {
+        if process
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_none()
+        {
+            return Ok(());
+        }
+        *child = None;
+    }
+
+    let root = find_generator_root()
+        .ok_or("没有找到本机 SHARP 运行环境。请在项目目录运行 npm run setup:sharp。")?;
+    let python = root.join(".venv/bin/python");
+    let server = root.join("sharp_server.py");
+    let process = Command::new(&python)
+        .arg(&server)
+        .current_dir(&root)
+        .env("PORT", "4173")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("无法启动本机 SHARP 服务：{error}"))?;
+    *child = Some(process);
+    Ok(())
+}
+
 #[tauri::command]
 fn apply_wallpaper(
     app: AppHandle,
     state: State<'_, WallpaperState>,
     mut config: WallpaperConfig,
 ) -> Result<(), String> {
-    config.scene_path = validate_file(&config.scene_path, &["sog", "spz", "ply"])?;
+    config.scene_path = validate_scene_source(&config.scene_path)?;
     config.background_path = config
         .background_path
         .as_deref()
@@ -216,6 +266,41 @@ fn validate_file(path: &str, allowed_extensions: &[&str]) -> Result<String, Stri
     Ok(path.to_string())
 }
 
+fn validate_scene_source(source: &str) -> Result<String, String> {
+    if let Some(job_path) = source.strip_prefix(GENERATOR_BASE_URL)
+        && let Some(job_id) = job_path.strip_suffix("/result")
+        && job_id.len() == 32
+        && job_id.bytes().all(|value| value.is_ascii_hexdigit())
+    {
+        return Ok(source.to_string());
+    }
+    validate_file(source, &["sog", "spz", "ply"])
+}
+
+fn find_generator_root() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(root) = env::var_os("IMAGE_FAKE_3D_ROOT") {
+        candidates.push(PathBuf::from(root));
+    }
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+    if let Ok(path) = env::current_dir() {
+        candidates.push(path);
+    }
+    if let Ok(path) = env::current_exe() {
+        candidates.push(path);
+    }
+
+    candidates.into_iter().find_map(|candidate| {
+        candidate.ancestors().find_map(|ancestor| {
+            let root = ancestor.to_path_buf();
+            (root.join("sharp_server.py").is_file()
+                && root.join(".venv/bin/python").is_file()
+                && root.join(".venv/bin/sharp").is_file())
+            .then_some(root)
+        })
+    })
+}
+
 fn fit_wallpaper_to_primary_monitor(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
     let monitor = app
         .primary_monitor()
@@ -342,10 +427,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .manage(GeneratorState::default())
         .manage(WallpaperState::default())
         .invoke_handler(tauri::generate_handler![
             apply_wallpaper,
             get_wallpaper_config,
+            start_scene_generator,
             stop_wallpaper,
             update_wallpaper_settings,
             wallpaper_failed,
@@ -383,5 +470,13 @@ mod tests {
     fn rejects_missing_scene_files() {
         let result = validate_file("/definitely/missing/scene.sog", &["sog", "spz", "ply"]);
         assert!(result.unwrap_err().contains("文件不存在"));
+    }
+
+    #[test]
+    fn accepts_only_local_generator_result_urls() {
+        let valid = "http://127.0.0.1:4173/api/jobs/0123456789abcdef0123456789abcdef/result";
+        assert_eq!(validate_scene_source(valid).unwrap(), valid);
+        assert!(validate_scene_source("https://example.com/scene.sog").is_err());
+        assert!(validate_scene_source("http://127.0.0.1:4173/api/health").is_err());
     }
 }
