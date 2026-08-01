@@ -8,7 +8,8 @@ const canvas = document.querySelector('#wallpaperCanvas')
 const background = document.querySelector('#background')
 const errorPanel = document.querySelector('#error')
 const runtime = new SpatialWallpaperRuntime(canvas, {
-  pixelRatioCap: 1,
+  pixelRatioCap: 1.25,
+  antialias: false,
   lodSplatCount: 900000,
 })
 
@@ -31,6 +32,23 @@ async function loadScene(source) {
   return new Uint8Array(await response.arrayBuffer())
 }
 
+async function loadSceneMetadata(source) {
+  if (!isGeneratedScene(source)) return {}
+  const response = await fetch(source.slice(0, -'/result'.length), { cache: 'no-store' })
+  if (!response.ok) throw new Error('无法读取三维场景参数。')
+  const metadata = await response.json()
+  if (metadata.depthUrl) {
+    metadata.depthImage = new URL(metadata.depthUrl, source).href
+  }
+  if (metadata.backgroundUrl) {
+    metadata.backgroundImage = new URL(metadata.backgroundUrl, source).href
+  }
+  if (metadata.subjectUrl) {
+    metadata.subjectImage = new URL(metadata.subjectUrl, source).href
+  }
+  return metadata
+}
+
 function mimeType(path) {
   const extension = path.split('.').pop()?.toLowerCase()
   return extension === 'png' ? 'image/png'
@@ -48,7 +66,10 @@ async function loadBackground(path) {
   background.src = URL.createObjectURL(new Blob([bytes], { type: mimeType(path) }))
   await loaded
   background.hidden = false
-  return cameraMetadataFromImage(background.naturalWidth, background.naturalHeight)
+  return {
+    ...cameraMetadataFromImage(background.naturalWidth, background.naturalHeight),
+    sourceImage: background,
+  }
 }
 
 async function start() {
@@ -57,11 +78,14 @@ async function start() {
   runtime.setDepthGain(config.depthGain)
 
   const sourceMetadata = await loadBackground(config.backgroundPath)
+  const sceneMetadata = await loadSceneMetadata(config.scenePath)
   const bytes = await loadScene(config.scenePath)
   await runtime.load(arrayBuffer(bytes), {
     fileName: isGeneratedScene(config.scenePath) ? 'scene.sog' : fileName(config.scenePath),
+    ...sceneMetadata,
     ...sourceMetadata,
   })
+  background.hidden = true
 
   await listen('wallpaper-cursor', ({ payload }) => runtime.setPose(payload.x, payload.y))
   await listen('wallpaper-settings', ({ payload }) => {

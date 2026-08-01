@@ -1,7 +1,9 @@
 let GaussianSceneRenderer = null
+let cameraMetadataFromImage = null
 let rendererImportError = null
 try {
   ;({ GaussianSceneRenderer } = await import('./gaussian-renderer.js'))
+  ;({ cameraMetadataFromImage } = await import('./packages/spatial-renderer/projection.js'))
 } catch (error) {
   rendererImportError = error
 }
@@ -114,8 +116,8 @@ try {
     scene.classList.toggle('is-photo-mode', spatialMode)
     scene.classList.toggle('is-depth-map', depthMode)
     photoCanvas.hidden = !spatialMode || !state.sceneLoaded
-    // Keep the source photo behind transparent splats as a conservative disocclusion fallback.
-    photoPreview.hidden = !spatialMode || !state.photoLoaded || depthMode
+    // The renderer owns the source texture after the spatial scene is ready.
+    photoPreview.hidden = !spatialMode || !state.photoLoaded || depthMode || state.sceneLoaded
     photoEmpty.hidden = !spatialMode || state.photoLoaded || state.sceneLoaded
     depthKey.hidden = !depthMode
 
@@ -132,7 +134,7 @@ try {
     } else if (depthMode) {
       photoStatus.textContent = '深度验证模式：亮色是近景，暗色是远景；颜色直接来自每个 Gaussian 的相机 Z。'
     } else if (mode === 'photo' && state.sceneLoaded) {
-      photoStatus.textContent = '连续深度负责分层视差；原照片作为最底层后备，避免极端视角露出黑洞。'
+      photoStatus.textContent = '连续深度负责分层视差；独立补洞背景只在移动后露出的区域显示。'
     }
     scheduleFrame()
   }
@@ -174,7 +176,7 @@ try {
       : '等待照片'
   }
 
-  function render() {
+  function render(timestamp) {
     const snapshot = math.createParallaxSnapshot(
       state.currentX,
       state.currentY,
@@ -189,7 +191,7 @@ try {
     let rendererMoving = false
     if (state.sceneLoaded && gaussianRenderer && state.mode !== 'vector') {
       gaussianRenderer.setPose(state.currentX, state.currentY, state.intensity)
-      rendererMoving = gaussianRenderer.render(reducedMotionQuery.matches)
+      rendererMoving = gaussianRenderer.render(reducedMotionQuery.matches, timestamp)
     }
     updateMetrics()
     return rendererMoving
@@ -204,7 +206,7 @@ try {
     const easing = reducedMotionQuery.matches ? 1 : 0.095
     state.currentX += (state.targetX - state.currentX) * easing
     state.currentY += (state.targetY - state.currentY) * easing
-    const rendererMoving = render()
+    const rendererMoving = render(timestamp)
     const poseMoving = Math.abs(state.targetX - state.currentX) > 0.0001
       || Math.abs(state.targetY - state.currentY) > 0.0001
     if (state.auto || poseMoving || rendererMoving) scheduleFrame()
@@ -289,7 +291,7 @@ try {
     photoStatus.textContent = `已载入 ${file.name}，正在本机生成真正的三维场景。`
 
     if (!(await checkRuntime())) throw new Error('SHARP 本地服务尚未准备好。')
-    setModelState('loading', '正在预处理照片并移除 EXIF', 2)
+    setModelState('loading', '正在准备几何推理副本，原图保持原始分辨率', 2)
     const prepared = await createInferenceBlob(image)
     if (requestId !== state.requestId) return
 
@@ -327,7 +329,15 @@ try {
 
     const count = await gaussianRenderer.load(
       bytes,
-      { ...job, fileName: 'scene.sog' },
+      {
+        ...job,
+        ...cameraMetadataFromImage(image.naturalWidth, image.naturalHeight),
+        fileName: 'scene.sog',
+        sourceImage: image,
+        depthImage: job.depthUrl,
+        backgroundImage: job.backgroundUrl,
+        subjectImage: job.subjectUrl,
+      },
       (progress) => setModelState('loading', '正在构建 WebGL 场景', 96 + progress * 4),
     )
     if (requestId !== state.requestId) return
@@ -336,7 +346,14 @@ try {
     state.splatCount = count || job.splats || 0
     updateDepthAvailability()
     setMode('photo')
-    setModelState('ready', `${Math.round(state.splatCount / 1000)}K Gaussians 已就绪 · 现在移动鼠标`)
+    const depthMetrics = gaussianRenderer.getDepthMetrics()
+    const fidelityLabel = depthMetrics.sourceTextureWidth
+      ? `${depthMetrics.sourceTextureWidth}×${depthMetrics.sourceTextureHeight} 原图纹理`
+      : 'Gaussian 纹理'
+    setModelState(
+      'ready',
+      `${fidelityLabel} · ${Math.round(state.splatCount / 1000)}K Gaussians`,
+    )
   }
 
   async function loadSplatFile(file) {

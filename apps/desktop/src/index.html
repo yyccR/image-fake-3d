@@ -12,88 +12,117 @@
     <main class="app-shell">
       <section class="workspace">
         <div class="preview-column">
-          <div class="display-frame" id="previewFrame">
-            <div class="display-toolbar">
-              <span class="display-dot"></span>
-              <span>LIVE DESKTOP PREVIEW</span>
+          <div class="device-stage" id="deviceStage" data-device="desktop">
+            <div class="device-preview">
+              <div class="display-frame" id="previewFrame">
+                <span class="device-camera" aria-hidden="true"></span>
+                <div class="display-surface" id="previewSurface">
+                  <img id="backgroundPreview" alt="壁纸原图预览" hidden>
+                  <img id="depthMapPreview" class="depth-map-preview" alt="所选模型生成的深度图" hidden>
+                  <canvas id="previewCanvas" aria-label="Gaussian 三维壁纸预览"></canvas>
+                  <div class="empty-state" id="emptyState">
+                    <span>01</span>
+                    <strong>选择一张原始照片</strong>
+                    <p>应用会在本机自动生成三维 Gaussian；处理完成后，可用鼠标直接预览景深。</p>
+                  </div>
+                  <div class="depth-badge" id="depthBadge" hidden>
+                    <span>DEPTH</span><strong id="depthReading">—</strong>
+                  </div>
+                  <div class="depth-key" id="depthKey" hidden aria-hidden="true">
+                    <span>远</span>
+                    <div></div>
+                    <span>近</span>
+                  </div>
+                </div>
+              </div>
+              <div class="monitor-stand" aria-hidden="true"><span></span><b></b></div>
+            </div>
+          </div>
+
+          <div class="progress-feed" id="loadingState" role="log" aria-live="polite" hidden>
+            <span class="visually-hidden" id="loadingText">正在准备本机模型</span>
+            <div class="progress-feed-stream" id="progressFeedStream" aria-hidden="true"></div>
+          </div>
+        </div>
+
+        <aside class="controls">
+          <div class="controls-toolbar">
+            <div class="preview-controls">
+              <button class="model-settings-trigger" id="modelSettingsButton" type="button" aria-label="打开模型处理方式" title="模型处理方式">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 2c.6 5.65 2.35 7.4 8 8-5.65.6-7.4 2.35-8 8-.6-5.65-2.35-7.4-8-8 5.65-.6 7.4-2.35 8-8Z" />
+                </svg>
+                <span class="visually-hidden"><strong id="modelSelectionName">Apple SHARP（GitHub 原版）</strong>模型处理方式</span>
+              </button>
+              <div class="device-modes" role="group" aria-label="预览设备">
+                <button id="desktopDevice" class="active" type="button" aria-label="电脑预览" title="电脑" aria-pressed="true">
+                  <span class="device-icon monitor" aria-hidden="true"></span>
+                </button>
+                <button id="phoneDevice" type="button" aria-label="手机预览" title="手机" aria-pressed="false">
+                  <span class="device-icon phone" aria-hidden="true"></span>
+                </button>
+              </div>
               <div class="preview-modes" role="group" aria-label="预览显示模式">
                 <button id="photoView" class="active" type="button" aria-pressed="true">空间效果</button>
                 <button id="depthView" type="button" aria-pressed="false" disabled>深度图</button>
               </div>
             </div>
-            <div class="display-surface" id="previewSurface">
-              <img id="backgroundPreview" alt="壁纸原图后备层" hidden>
-              <canvas id="previewCanvas" aria-label="Gaussian 三维壁纸预览"></canvas>
-              <div class="empty-state" id="emptyState">
-                <span>01</span>
-                <strong>选择一张原始照片</strong>
-                <p>应用会在本机自动生成三维 Gaussian；处理完成后，可用鼠标直接预览景深。</p>
-              </div>
-              <div class="loading-state" id="loadingState" hidden>
-                <span class="loader"></span>
-                <strong id="loadingText">正在准备本机模型</strong>
-                <progress id="loadProgress" max="100" value="0"></progress>
-              </div>
-              <div class="depth-badge" id="depthBadge" hidden>
-                <span>DEPTH</span><strong id="depthReading">—</strong>
-              </div>
-              <div class="depth-key" id="depthKey" hidden aria-hidden="true">
-                <span>远</span>
-                <div></div>
-                <span>近</span>
-              </div>
-            </div>
-            <div class="display-foot">
-              <span>MOVE POINTER</span>
-              <span class="display-rule"></span>
-              <span id="previewHint">窗口不捕获桌面点击</span>
-            </div>
           </div>
-
-          <div class="runtime-strip">
-            <div><span>SCENE</span><strong id="sceneReading">未加载</strong></div>
-            <div><span>GAUSSIANS</span><strong id="splatReading">—</strong></div>
-            <div><span>DESKTOP HOST</span><strong id="hostReading">待机</strong></div>
-          </div>
-        </div>
-
-        <aside class="controls">
-          <div class="section-label"><span>01</span><div><small>SOURCE</small><strong>选择一张原始照片</strong></div></div>
-
-          <button class="file-card" id="chooseImage" type="button">
-            <span><small>JPEG / PNG / WEBP</small><strong id="imageFileName">选择照片并自动生成</strong></span>
-            <b>＋</b>
-          </button>
-
-          <div class="section-label parameters"><span>02</span><div><small>MOTION</small><strong>控制相机幅度</strong></div></div>
-
-          <label class="range-row" for="intensity">
-            <span><strong>视差强度</strong><output id="intensityOutput">82%</output></span>
-            <input id="intensity" type="range" min="0" max="125" value="82">
-            <small><i>克制</i><i>自然</i><i>夸张</i></small>
-          </label>
-
-          <label class="range-row" for="depthGain">
-            <span><strong>深度增益</strong><output id="depthGainOutput">120%</output></span>
-            <input id="depthGain" type="range" min="50" max="180" step="5" value="120">
-            <small><i>平缓</i><i>空间</i><i>分层</i></small>
-          </label>
-
-          <div class="status-card" id="statusCard" data-state="idle" role="status" aria-live="polite">
-            <span class="status-light"></span>
-            <div><strong id="statusTitle">正在检查本机模型</strong><p id="statusMessage">准备照片到空间壁纸的自动处理管线。</p></div>
-          </div>
-
-          <div class="actions">
-            <button id="applyWallpaper" class="apply-button" type="button" disabled>
-              <span>应用到桌面</span><b>↗</b>
+          <section class="control-card source-card" aria-labelledby="sourceCardTitle">
+            <div class="section-label"><span>01</span><div><strong id="sourceCardTitle">选择一张原始照片</strong><small>自动生成可移动的空间场景</small></div></div>
+            <button class="file-card" id="chooseImage" type="button">
+              <span><strong id="imageFileName">选择照片并自动生成</strong></span>
+              <b>＋</b>
             </button>
-            <button id="stopWallpaper" class="stop-button" type="button" disabled>停止壁纸</button>
-          </div>
+          </section>
 
-          <p class="privacy-note">照片和生成场景都只保留在本机。SOG 是内部格式，不需要手动上传；退出应用后系统原壁纸会自动显露。</p>
+          <section class="control-card camera-card" aria-labelledby="cameraCardTitle">
+            <div class="section-label"><span>02</span><div><strong id="cameraCardTitle">控制 3D 视角移动幅度</strong><small>调整预览中的 3D 视角移动范围</small></div></div>
+            <label class="range-row" for="intensity">
+              <span><strong>视差强度</strong><output id="intensityOutput">82%</output></span>
+              <input id="intensity" type="range" min="0" max="125" value="82">
+              <small><i>克制</i><i>自然</i><i>夸张</i></small>
+            </label>
+
+            <label class="range-row" for="depthGain">
+              <span><strong>深度增益</strong><output id="depthGainOutput">120%</output></span>
+              <input id="depthGain" type="range" min="50" max="180" step="5" value="120">
+              <small><i>平缓</i><i>空间</i><i>分层</i></small>
+            </label>
+          </section>
+
+          <section class="control-card output-card" aria-labelledby="outputCardTitle">
+            <div class="section-label"><span>03</span><div><strong id="outputCardTitle">应用到桌面</strong><small>在主显示器上启用动态壁纸</small></div></div>
+            <div class="status-card" id="statusCard" data-state="idle" role="status" aria-live="polite">
+              <span class="status-light"></span>
+              <div><strong id="statusTitle">正在检查本机模型</strong><p id="statusMessage">准备照片到空间壁纸的自动处理管线。</p></div>
+            </div>
+
+            <div class="actions">
+              <button id="applyWallpaper" class="apply-button" type="button" disabled>
+                <span>应用到桌面</span><b>↗</b>
+              </button>
+              <button id="stopWallpaper" class="stop-button" type="button" disabled>停止壁纸</button>
+            </div>
+          </section>
+
         </aside>
       </section>
     </main>
+
+    <section class="model-settings-overlay" id="modelSettings" hidden>
+      <div class="model-settings-page" role="dialog" aria-modal="true" aria-labelledby="modelSettingsTitle">
+        <header>
+          <button id="closeModelSettings" type="button" aria-label="关闭模型设置">←</button>
+          <div><h1 id="modelSettingsTitle">模型处理方式</h1></div>
+          <span>全部在本机处理</span>
+        </header>
+        <div class="model-groups" id="modelList" aria-label="处理流程模型"></div>
+        <footer>
+          <p id="modelSettingsNote">每个处理阶段可独立选择本机模型。</p>
+          <button id="applyModelSelection" type="button">应用并重新生成</button>
+        </footer>
+      </div>
+    </section>
   </body>
 </html>

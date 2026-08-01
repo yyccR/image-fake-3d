@@ -1,5 +1,7 @@
 use std::{
     env,
+    io::Write,
+    net::TcpStream,
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{
@@ -62,10 +64,9 @@ struct GeneratorState {
 impl Drop for GeneratorState {
     fn drop(&mut self) {
         if let Ok(child) = self.child.get_mut()
-            && let Some(child) = child.as_mut()
+            && let Some(mut child) = child.take()
         {
-            let _ = child.kill();
-            let _ = child.wait();
+            stop_generator_child(&mut child);
         }
     }
 }
@@ -99,6 +100,40 @@ fn start_scene_generator(state: State<'_, GeneratorState>) -> Result<(), String>
         .map_err(|error| format!("无法启动本机 SHARP 服务：{error}"))?;
     *child = Some(process);
     Ok(())
+}
+
+fn request_generator_shutdown() {
+    if let Ok(mut stream) = TcpStream::connect(("127.0.0.1", 4173)) {
+        let request = concat!(
+            "POST /api/shutdown HTTP/1.1\r\n",
+            "Host: 127.0.0.1:4173\r\n",
+            "Connection: close\r\n",
+            "Content-Length: 0\r\n",
+            "X-Image3D-Shutdown: 1\r\n",
+            "\r\n"
+        );
+        let _ = stream.write_all(request.as_bytes());
+    }
+}
+
+fn stop_generator_child(child: &mut Child) {
+    request_generator_shutdown();
+    for _ in 0..40 {
+        if child.try_wait().ok().flatten().is_some() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn stop_scene_generator(state: &GeneratorState) {
+    if let Ok(mut child) = state.child.lock()
+        && let Some(mut child) = child.take()
+    {
+        stop_generator_child(&mut child);
+    }
 }
 
 #[tauri::command]
@@ -424,11 +459,18 @@ fn order_desktop_window_back(_window: &WebviewWindow) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(GeneratorState::default())
         .manage(WallpaperState::default())
+        .setup(|app| {
+            let state = app.state::<GeneratorState>();
+            if let Err(error) = start_scene_generator(state) {
+                eprintln!("failed to start local model service: {error}");
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             apply_wallpaper,
             get_wallpaper_config,
@@ -438,8 +480,15 @@ pub fn run() {
             wallpaper_failed,
             wallpaper_ready,
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running Spatial Wallpaper Lab");
+
+    // App::run exits via process::exit, so managed-state destructors do not run.
+    app.run(|app_handle, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            stop_scene_generator(&app_handle.state::<GeneratorState>());
+        }
+    });
 }
 
 #[cfg(test)]

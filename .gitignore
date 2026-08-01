@@ -11,3 +11,4 @@ __pycache__/
 *.spz
 *.compressed.ply
 npm-debug.log*
+test-images/

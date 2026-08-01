@@ -10,7 +10,13 @@ export class SpatialWallpaperRuntime {
     this.targetY = 0
     this.frameId = 0
     this.disposed = false
+    this.resizeObserver = null
     this.renderer.setDepthGain(this.depthGain)
+    this.renderer.setPose(this.targetX, this.targetY, this.intensity)
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.scheduleFrame())
+      this.resizeObserver.observe(canvas.parentElement || canvas)
+    }
   }
 
   async load(bytes, metadata = {}, onProgress) {
@@ -53,18 +59,20 @@ export class SpatialWallpaperRuntime {
 
   scheduleFrame() {
     if (!this.frameId && !this.disposed && !document.hidden) {
-      this.frameId = window.requestAnimationFrame(() => this.render())
+      this.frameId = window.requestAnimationFrame((timestamp) => this.render(timestamp))
     }
   }
 
-  render() {
+  render(timestamp) {
     this.frameId = 0
-    const moving = this.renderer.render(this.reducedMotion)
+    const moving = this.renderer.render(this.reducedMotion, timestamp)
     if (moving) this.scheduleFrame()
   }
 
   dispose() {
     this.disposed = true
+    this.resizeObserver?.disconnect()
+    this.resizeObserver = null
     if (this.frameId) window.cancelAnimationFrame(this.frameId)
     this.frameId = 0
     this.renderer.dispose()

@@ -25,6 +25,7 @@ services/
   scene-generator/         planned provider-neutral generation API
 third_party/
   apple-sharp/             checkpoint license and redistribution notice
+  birefnet/                subject-model license and pinned-revision notice
 ```
 
 The shared renderer accepts scene bytes, rendering options, and normalized pose
@@ -71,11 +72,30 @@ interface SceneGenerator {
 }
 ```
 
+`GenerateOptions.depthModel` and `GenerateOptions.backgroundModel` remain
+provider-neutral. The current research service exposes Apple's GitHub SHARP
+pipeline, which invokes `sharp predict`
+without external depth alignment, and a Depth Anything V2 Small adapter that
+aligns relative disparity to SHARP's camera scale. The dense preview drives the
+full-resolution source-photo mesh. A pinned BiRefNet Dynamic model supplies the
+soft subject alpha; alpha boundaries and strong depth discontinuities both cut
+the mesh so triangles cannot bridge foreground and background. The final SOG
+contains only the rear Gaussian layer unchanged for depth inspection. Photo mode
+does not composite that layer; instead, it places a separately inpainted texture
+behind the source-photo mesh.
+OpenCV Telea is the default background repairer; OpenCV Navier-Stokes and a
+deterministic Gaussian color field are retained as low-dependency fallbacks. All
+repairers composite only inside the alpha-defined foreground edge band, so every
+source pixel outside that mask remains unchanged.
+The rear texture becomes visible only through disocclusion holes, preserving the
+original source pixels everywhere the depth surface remains visible.
+
 Initial macOS research builds can implement this through the existing local
 Python/SHARP process. Future product builds can select a differently licensed
 on-device model or a remote service without changing the renderer or wallpaper
 host. A `SceneResult` should contain SOG bytes, the source-image fallback, depth
-percentiles, generator name/version, and a content hash.
+percentiles, generator name/version, selected depth model, optional dense-depth
+preview, and a content hash.
 
 ## Platform hosts
 
@@ -115,6 +135,10 @@ The Apple checkpoint is larger than GitHub's 2 GiB per-asset limit, so the
 research Release stores two numbered parts. `scripts/download-sharp-model.sh`
 downloads them with resume support, verifies each part and the reconstructed
 checkpoint, then moves the verified file into `.cache/sharp` atomically.
+
+BiRefNet Dynamic is cached separately in `.cache/birefnet`. Its MIT-licensed
+remote code and weights are pinned to a reviewed revision; the model is loaded
+with SHARP when the desktop service starts and both are released when it exits.
 
 The Apple Machine Learning Research Model License permits research use and
 redistribution with the license and attribution, but explicitly excludes

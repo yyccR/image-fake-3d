@@ -9,26 +9,35 @@ Unlike the previous five-plane approximation, the photo is represented by
 hundreds of thousands of 3D Gaussians with continuous position, scale,
 orientation, color, and opacity. Nearby views are perspective reprojections of
 that scene instead of independent 2D texture translations. SHARP predicts two
-Gaussian layers along each input ray, so the rear layer can fill small regions
-revealed when the viewpoint moves away from an occluding subject. The original
-photo also remains fixed behind the transparent Gaussian render as a final
-fallback for any disocclusion that SHARP did not reconstruct, preventing empty
-pixels at exaggerated viewing angles.
+Gaussian layers along each input ray. The renderer uses the full-resolution
+source photo as a depth-displaced visible surface. BiRefNet Dynamic supplies a
+high-resolution soft subject alpha, and the mesh is cut at both alpha boundaries
+and strong depth discontinuities. Because SHARP's rear layer can still contain a
+copy of the visible subject, it is hidden in photo mode and kept only for depth
+inspection. The server separately inpaints a background texture along the
+alpha-defined near-side edge band; a rear plane shows that texture only through
+holes revealed by viewpoint movement, so unchanged source pixels stay sharp.
 
 After inference, the server reads the P10, P50, and P90 camera-depth
 percentiles from the generated PLY. The renderer focuses around P50 and scales
 the safe camera baseline from P10, avoiding sensitivity to extreme far-depth
-outliers. The **Depth validation** mode colors the actual Gaussians by their
-camera-space Z value (near is light, far is dark), while the panel reports the
-measured depth range, ratio, and current near/far pixel disparity.
+outliers. The default model follows the GitHub `origin/main` implementation and
+runs Apple's published `sharp predict` command directly. The desktop model
+selector also offers Depth Anything V2 Small; its relative disparity is aligned
+to SHARP's camera scale before SHARP generates the same two-layer scene. In both
+modes, the visible layer provides depth for the source texture and only the rear
+layer is encoded into the SOG. Background repair is selected independently:
+OpenCV Telea is the default local background repairer; OpenCV
+Navier-Stokes and the built-in Gaussian color field remain available as fast
+fallbacks.
 
 ## Requirements
 
 - Apple silicon Mac with about 12 GB of free unified memory
 - Python 3.13 and [uv](https://docs.astral.sh/uv/)
 - Node.js 20 or newer
-- About 4 GB of free disk space for the Python environment and 2.81 GB model
-  checkpoint
+- About 4.6 GB of free disk space for the Python environment, the 2.81 GB
+  SHARP checkpoint, and the 444 MB BiRefNet Dynamic checkpoint
 
 The SHARP model is released by Apple for non-commercial research use only.
 Review Apple's `LICENSE_MODEL` in the
@@ -40,10 +49,13 @@ Review Apple's `LICENSE_MODEL` in the
 npm run setup:sharp
 ```
 
-The setup command creates `.venv`, installs the pinned SHARP revision and the
-Gaussian conversion tool, then reconstructs the checkpoint from the versioned
-GitHub Release into `.cache/sharp`. Interrupted part downloads resume
-automatically and every part plus the final checkpoint is SHA-256 verified.
+The setup command creates `.venv`, installs the pinned SHARP revision,
+Transformers, BiRefNet's runtime dependencies, OpenCV, and the Gaussian
+conversion tool. It reconstructs the SHARP checkpoint into `.cache/sharp` and
+downloads the reviewed BiRefNet Dynamic revision into `.cache/birefnet`.
+Interrupted SHARP downloads resume automatically and are SHA-256 verified.
+Optional Depth Anything weights download into `.cache/depth-anything` on first
+use.
 
 To download only the checkpoint:
 
@@ -62,10 +74,15 @@ npm run serve
 Open <http://127.0.0.1:4173>. Uploading a photo performs these local steps:
 
 1. Strip EXIF and resize the upload to at most 2048 pixels on its long side.
-2. Run SHARP on the Mac GPU through PyTorch MPS.
-3. Merge the raw multi-million Gaussian output to about 900K Gaussians.
-4. Encode the result as a compact SOG scene.
-5. Render it with Spark and a Three.js perspective camera in WebGL2.
+2. Run GitHub's original Apple SHARP command on the Mac GPU through PyTorch MPS.
+3. Read the visible surface depth from SHARP's generated PLY without modifying it.
+4. Run preloaded BiRefNet Dynamic at a 1024-pixel long edge to obtain a soft
+   subject alpha, then use it to cut the visible depth mesh.
+5. Use the selected background repairer (OpenCV Telea by default, with
+   Navier-Stokes and Gaussian fallbacks) on a narrow foreground edge band to
+   create a separate texture for newly revealed regions.
+6. Extract and encode the untouched rear 768x768 Gaussian layer for depth inspection.
+7. Render the full-resolution source texture in front of the independent background.
 
 Uploaded photos and intermediate scenes live in an operating-system temporary
 directory for the lifetime of the server process. They are never sent to a
@@ -113,10 +130,11 @@ HarmonyOS, Windows, and replaceable scene-generator boundaries.
 npm test
 ```
 
-The tests cover the pointer math, local server metadata, PLY inspection, and
-job payloads. The desktop crate adds cursor normalization and file validation
-tests. Full SHARP inference is verified separately with a real photo because it
-requires the 2.81 GB checkpoint and MPS hardware.
+The tests cover pointer math, alpha-guided mesh boundaries, local server
+metadata, PLY inspection, background masks, and job payloads. The desktop crate
+adds cursor normalization and file validation tests. Full SHARP and BiRefNet
+inference are verified separately with real photos because they require the
+local checkpoints and MPS hardware.
 
 Desktop checks:
 
@@ -135,11 +153,19 @@ required license and attribution. Read
 [`third_party/apple-sharp/LICENSE_MODEL`](third_party/apple-sharp/LICENSE_MODEL)
 before downloading or using it.
 
+BiRefNet Dynamic declares the MIT license. The integration pins reviewed remote
+model code and weights to revision
+`280306042f57b7a33854319da62fd86aaa89ec4c`; see
+[`third_party/birefnet/LICENSE`](third_party/birefnet/LICENSE) and
+[`third_party/birefnet/MODEL_NOTICE.md`](third_party/birefnet/MODEL_NOTICE.md).
+
 ## Measured M4 run
 
 On the local 24 GB M4 used to build this demo, the supplied 1080x2347 test
 image was preprocessed to 942x2048. SHARP produced 1,179,648 Gaussians in
-about 35 seconds; merge-decimation and SOG encoding brought that to 900,000
-Gaussians in another 8 seconds. The files were 66.1 MB raw PLY, 50.4 MB
-optimized PLY, and 9.44 MB SOG. Browser loading completed without WebGL or
-console errors. These timings vary by Mac and current memory pressure.
+about 35 seconds. The current source-mesh pipeline keeps the 589,824 rear-layer
+Gaussians and encodes them to an approximately 6 MB SOG. Browser loading
+completed without WebGL or console errors. These timings vary by Mac and
+current memory pressure. On the same machine, BiRefNet Dynamic becomes ready in
+about 2.1 seconds; 1024-long-edge alpha inference takes about 1.2-1.8 seconds
+after the first image and keeps roughly 424 MiB of model allocations resident.
