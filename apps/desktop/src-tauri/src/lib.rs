@@ -152,10 +152,18 @@ fn apply_wallpaper(
     config.depth_gain = config.depth_gain.clamp(0.4, 2.2);
 
     state.cursor_generation.fetch_add(1, Ordering::SeqCst);
-    if let Some(existing) = app.get_webview_window(WALLPAPER_LABEL) {
-        existing.close().map_err(|error| error.to_string())?;
+    {
+        let mut current = state.config.lock().map_err(|_| "壁纸状态锁异常。")?;
+        *current = Some(config);
     }
-    *state.config.lock().map_err(|_| "壁纸状态锁异常。")? = Some(config);
+
+    if let Some(window) = app.get_webview_window(WALLPAPER_LABEL) {
+        window.hide().map_err(|error| error.to_string())?;
+        window
+            .emit("wallpaper-reload", ())
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
 
     let monitor = app
         .primary_monitor()
@@ -234,7 +242,7 @@ fn wallpaper_ready(app: AppHandle, state: State<'_, WallpaperState>) -> Result<(
         .ok_or("壁纸窗口不存在。")?;
     window.show().map_err(|error| error.to_string())?;
     fit_wallpaper_to_primary_monitor(&app, &window)?;
-    order_desktop_window_back(&window)?;
+    order_desktop_window_front(&window)?;
 
     let surface_message = wallpaper_surface_description(&app, &window).ok();
 
@@ -263,7 +271,8 @@ fn wallpaper_failed(
 ) -> Result<(), String> {
     state.cursor_generation.fetch_add(1, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window(WALLPAPER_LABEL) {
-        let _ = window.close();
+        let _ = window.emit("wallpaper-stop", ());
+        let _ = window.hide();
     }
     app.emit_to(
         "main",
@@ -280,7 +289,8 @@ fn wallpaper_failed(
 fn stop_wallpaper(app: AppHandle, state: State<'_, WallpaperState>) -> Result<(), String> {
     state.cursor_generation.fetch_add(1, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window(WALLPAPER_LABEL) {
-        window.close().map_err(|error| error.to_string())?;
+        let _ = window.emit("wallpaper-stop", ());
+        window.hide().map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -427,8 +437,7 @@ fn configure_desktop_window(window: &WebviewWindow) -> Result<(), String> {
             native_window.setCollectionBehavior(
                 NSWindowCollectionBehavior::CanJoinAllSpaces
                     | NSWindowCollectionBehavior::Stationary
-                    | NSWindowCollectionBehavior::IgnoresCycle
-                    | NSWindowCollectionBehavior::Transient,
+                    | NSWindowCollectionBehavior::IgnoresCycle,
             );
         })
         .map_err(|error| error.to_string())
@@ -440,20 +449,20 @@ fn configure_desktop_window(_window: &WebviewWindow) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn order_desktop_window_back(window: &WebviewWindow) -> Result<(), String> {
+fn order_desktop_window_front(window: &WebviewWindow) -> Result<(), String> {
     use objc2_app_kit::NSWindow;
 
     let native_window = window.ns_window().map_err(|error| error.to_string())? as usize;
     window
         .run_on_main_thread(move || unsafe {
             let native_window = &*(native_window as *const NSWindow);
-            native_window.orderBack(None);
+            native_window.orderFrontRegardless();
         })
         .map_err(|error| error.to_string())
 }
 
 #[cfg(not(target_os = "macos"))]
-fn order_desktop_window_back(_window: &WebviewWindow) -> Result<(), String> {
+fn order_desktop_window_front(_window: &WebviewWindow) -> Result<(), String> {
     Ok(())
 }
 

@@ -35,7 +35,7 @@ export function mapPoseToSafeBaseline(pose, nominalAmplitude, safeAmplitude) {
   return clamp(normalizedPose, -1, 1) * Math.min(nominal, safe)
 }
 
-export function dampingAlpha(deltaMs, timeConstantMs = 140) {
+export function dampingAlpha(deltaMs, timeConstantMs = 190) {
   const delta = finiteNumber(deltaMs, 'deltaMs')
   const timeConstant = positiveNumber(timeConstantMs, 'timeConstantMs')
   if (delta <= 0) return 0
@@ -58,6 +58,36 @@ export function adaptiveBaselineFraction(nearDepth, farDepth) {
   )
 }
 
+export function inverseDepthMidpoint(nearDepth, farDepth) {
+  const near = positiveNumber(nearDepth, 'nearDepth')
+  const far = positiveNumber(farDepth, 'farDepth')
+  if (far < near) throw new RangeError('farDepth must be greater than or equal to nearDepth')
+  return 2 / ((1 / near) + (1 / far))
+}
+
+export function softSubjectAnchorDepth(subjectDepth, backgroundDepth, motionRatio) {
+  const subject = positiveNumber(subjectDepth, 'subjectDepth')
+  const background = positiveNumber(backgroundDepth, 'backgroundDepth')
+  const ratio = finiteNumber(motionRatio, 'motionRatio')
+  if (background < subject) {
+    throw new RangeError('backgroundDepth must be greater than or equal to subjectDepth')
+  }
+  if (ratio < 0) throw new RangeError('motionRatio must be greater than or equal to zero')
+  if (background === subject || ratio === 0) return subject
+
+  // Blend in inverse-depth space so subject/background counter-motion has the requested ratio.
+  const anchorDisparity = ((1 / subject) + ratio * (1 / background)) / (1 + ratio)
+  return 1 / anchorDisparity
+}
+
+export function parallaxShiftPx(baseline, depth, anchorDepth, focalPx) {
+  const offset = finiteNumber(baseline, 'baseline')
+  const surfaceDepth = positiveNumber(depth, 'depth')
+  const anchor = positiveNumber(anchorDepth, 'anchorDepth')
+  const focal = positiveNumber(focalPx, 'focalPx')
+  return focal * offset * ((1 / anchor) - (1 / surfaceDepth))
+}
+
 export function limitBaselineForDisocclusion(
   baseline,
   nearDepth,
@@ -78,6 +108,34 @@ export function limitBaselineForDisocclusion(
   const disparity = Math.abs((1 / near) - (1 / far))
   if (disparity < 1e-6) return requested
   const limit = extent * Math.min(fraction, 0.25) / (focal * disparity)
+  return clamp(requested, -limit, limit)
+}
+
+export function limitBaselineForFrameCoverage(
+  baseline,
+  nearDepth,
+  farDepth,
+  anchorDepth,
+  focalPx,
+  sourceExtent,
+  safeEdgeFraction,
+) {
+  const requested = finiteNumber(baseline, 'baseline')
+  const near = positiveNumber(nearDepth, 'nearDepth')
+  const far = positiveNumber(farDepth, 'farDepth')
+  if (far < near) throw new RangeError('farDepth must be greater than or equal to nearDepth')
+  const anchor = positiveNumber(anchorDepth, 'anchorDepth')
+  const focal = positiveNumber(focalPx, 'focalPx')
+  const extent = positiveNumber(sourceExtent, 'sourceExtent')
+  const fraction = finiteNumber(safeEdgeFraction, 'safeEdgeFraction')
+  if (fraction <= 0) return requested
+
+  const maximumDisparity = Math.max(
+    Math.abs((1 / anchor) - (1 / near)),
+    Math.abs((1 / anchor) - (1 / far)),
+  )
+  if (maximumDisparity < 1e-6) return requested
+  const limit = extent * Math.min(fraction, 0.25) / (focal * maximumDisparity)
   return clamp(requested, -limit, limit)
 }
 

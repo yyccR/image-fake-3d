@@ -57,6 +57,16 @@ Interrupted SHARP downloads resume automatically and are SHA-256 verified.
 Optional Depth Anything weights download into `.cache/depth-anything` on first
 use.
 
+The verified SHARP checkpoint is available in the
+[SHARP research-model Release](https://github.com/yyccR/image-fake-3d/releases/tag/sharp-model-2572gikvuh).
+The [additional model Release](https://github.com/yyccR/image-fake-3d/releases/tag/models-2026-09-21)
+contains archived BiRefNet Dynamic and Depth Anything V2 Small model caches,
+including their configuration files, plus their licenses.
+Extract each archive into its corresponding Hugging Face cache directory
+under `.cache/birefnet` or `.cache/depth-anything`, or run the normal setup to
+download the pinned upstream revisions again. The SHARP checkpoint is restricted
+to non-commercial research; review each model's license before use.
+
 To download only the checkpoint:
 
 ```bash

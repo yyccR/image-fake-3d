@@ -65,7 +65,7 @@ button { color: inherit; }
 .display-surface > img { object-fit: cover; z-index: 0; }
 .display-surface.has-scene #backgroundPreview { filter: none; transform: none; }
 .display-surface canvas { z-index: 1; }
-.display-surface > img.depth-map-preview { z-index: 2; filter: contrast(1.06); }
+.display-surface > img.depth-map-preview { z-index: 2; filter: contrast(1.06); transform: scale(var(--scene-zoom, 1)); }
 .empty-state { position: absolute; inset: 0; z-index: 3; display: grid; place-content: center; justify-items: center; padding: 32px; color: white; text-align: center; }
 .empty-state > span { font: 500 72px/1 "Iowan Old Style", serif; color: rgba(216, 240, 108, 0.22); }
 .empty-state strong { font: 500 26px/1.1 "Iowan Old Style", serif; }

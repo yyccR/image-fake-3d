@@ -16,7 +16,7 @@
     "serve": ".venv/bin/python sharp_server.py",
     "desktop:dev": "npm run tauri dev --workspace @image-fake-3d/desktop",
     "desktop:build": "npm run tauri build --workspace @image-fake-3d/desktop",
-    "test": "node --experimental-default-type=module --check app.js && node --experimental-default-type=module --check gaussian-renderer.js && node --experimental-default-type=module --check packages/spatial-renderer/runtime.js && node --experimental-default-type=module --check apps/desktop/src/main.js && python3 -m py_compile sharp_server.py scripts/download-birefnet-model.py && bash -n scripts/setup-sharp.sh && bash -n scripts/download-sharp-model.sh && node --test tests/*.test.js && python3 -m unittest discover -s tests -p 'test_*.py'"
+    "test": "node --experimental-default-type=module --check app.js && node --experimental-default-type=module --check gaussian-renderer.js && node --experimental-default-type=module --check packages/spatial-renderer/runtime.js && node --experimental-default-type=module --check apps/desktop/src/main.js && node --experimental-default-type=module --check apps/desktop/src/wallpaper.js && node --experimental-default-type=module --check apps/desktop/src/wallpaper-resources.js && python3 -m py_compile sharp_server.py scripts/download-birefnet-model.py && bash -n scripts/setup-sharp.sh && bash -n scripts/download-sharp-model.sh && node --test tests/*.test.js && python3 -m unittest discover -s tests -p 'test_*.py'"
   },
   "devDependencies": {
     "@playcanvas/splat-transform": "3.1.7"

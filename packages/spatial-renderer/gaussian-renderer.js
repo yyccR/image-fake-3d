@@ -6,7 +6,9 @@ import {
   depthFromPreview,
   depthMeshGrid,
   limitBaselineForDisocclusion,
+  limitBaselineForFrameCoverage,
   mapPoseToSafeBaseline,
+  softSubjectAnchorDepth,
 } from './projection.js'
 
 const MAX_DEPTH_GRID_EDGE = 448
@@ -19,6 +21,18 @@ const BACKGROUND_CORE_ALPHA = 0.05
 const SUBJECT_DEPTH_EXTRAPOLATION_CELLS = 2
 const BACKGROUND_DEPTH_SEPARATION = 1.006
 const SCENIC_MAX_DISOCCLUSION_FRACTION = 0.006
+const SUBJECT_DISPARITY_RETENTION = 0.6
+const SUBJECT_TO_BACKGROUND_MOTION_RATIO = 0.11
+// Offset the softer anchor without reducing the background sweep calibrated against iOS.
+const SUBJECT_LOCK_BASELINE_GAIN = 2.35 * (1 + SUBJECT_TO_BACKGROUND_MOTION_RATIO)
+const SUBJECT_COMPOSITION_ZOOM = 1.14
+const SUBJECT_DISPARITY_SMOOTHING_PASSES = 3
+const SUBJECT_DISPARITY_WINSOR_MIN_VERTICES = 32
+const SUBJECT_DISPARITY_WINSOR_FRACTION = 0.02
+const SUBJECT_FALLBACK_ALPHA_BAND = 0.08
+const SUBJECT_EDGE_SPIKE_RATIO = 2
+const BACKGROUND_OVERSCAN = 1.16
+const FRAME_COVERAGE_FRACTION = 0.06
 
 function quantile(sortedValues, fraction) {
   const position = (sortedValues.length - 1) * fraction
@@ -57,6 +71,8 @@ export class GaussianSceneRenderer {
     this.subjectCoreMesh = null
     this.subjectFringeMesh = null
     this.backgroundMesh = null
+    this.backgroundPhotoMaterial = null
+    this.backgroundDepthMaterial = null
     this.sourceTextureWidth = 0
     this.sourceTextureHeight = 0
     this.loaded = false
@@ -77,11 +93,20 @@ export class GaussianSceneRenderer {
     this.sourceWidth = 1080
     this.sourceHeight = 2340
     this.focalPx = 1700
+    this.compositionZoom = 1
     this.pixelRatioCap = options.pixelRatioCap ?? 2
     this.hasSourceCamera = false
     this.maxDisocclusionFraction = 0
     this.motionNearDepth = this.nearDepth
     this.motionFarDepth = this.farDepth
+    this.motionAnchorDepth = this.farDepth
+    this.subjectAnchorDepth = 0
+    this.coverageFarDepth = this.farDepth
+    this.backgroundDepth = 0
+    this.coverageWorldCorners = Array.from({ length: 4 }, () => new THREE.Vector3())
+    this.coverageProjectedCorners = Array.from({ length: 4 }, () => new THREE.Vector3())
+    this.appliedCameraX = 0
+    this.appliedCameraY = 0
     this.lastRenderTimestamp = null
   }
 
@@ -94,10 +119,10 @@ export class GaussianSceneRenderer {
 
   updateProjection(targetAspect) {
     const aspect = Math.max(0.1, targetAspect)
-    // Match object-fit: cover: a wider phone crop shows only part of a tall source image.
+    // Match object-fit: cover, then reserve a crop margin for parallax camera travel.
     const visibleSourceHeight = Math.min(this.sourceHeight, this.sourceWidth / aspect)
     this.camera.fov = THREE.MathUtils.radToDeg(
-      2 * Math.atan(visibleSourceHeight / (2 * this.focalPx)),
+      2 * Math.atan(visibleSourceHeight / (2 * this.focalPx * this.compositionZoom)),
     )
     this.camera.aspect = aspect
     this.camera.updateProjectionMatrix()
@@ -156,8 +181,6 @@ export class GaussianSceneRenderer {
         this.farDepth,
         positiveDepthOr(metadata.depthDecodeFar, this.farDepth),
       )
-      // Keep the original optical axis at rest; bbox X/Y is composition-dependent.
-      this.depthAnchor.set(0, 0, -this.farDepth)
     } else {
       const verticalFov = THREE.MathUtils.degToRad(this.camera.fov)
       const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * this.camera.aspect)
@@ -172,12 +195,16 @@ export class GaussianSceneRenderer {
       this.motionNearDepth = this.nearDepth
       this.motionFarDepth = this.farDepth
       mesh.position.set(-rotatedCenter.x, -rotatedCenter.y, -this.focusDepth - rotatedCenter.z)
-      this.depthAnchor.set(0, 0, -this.farDepth)
     }
+    this.coverageFarDepth = this.motionFarDepth
     this.camera.near = Math.max(0.005, this.focusDepth * 0.01)
     this.camera.far = Math.max(100, this.focusDepth * 20)
     this.camera.updateProjectionMatrix()
     await this.loadSourcePhotoMesh(metadata)
+    if (this.hasSourceCamera) this.updateProjection(this.camera.aspect)
+    this.camera.far = Math.max(this.camera.far, this.coverageFarDepth * 1.2)
+    this.camera.updateProjectionMatrix()
+    this.updateMotionAnchor()
     this.loaded = true
     this.resetPose()
     this.setDepthMode(this.depthMode)
@@ -232,14 +259,20 @@ export class GaussianSceneRenderer {
   setDepthMode(enabled) {
     const wasDepthMode = this.depthMode
     this.depthMode = Boolean(enabled)
+    this.updateMotionAnchor()
     this.renderer.setClearColor(this.depthMode ? 0x10191b : 0x071b1b, this.depthMode ? 1 : 0)
     for (const layer of [
       this.photoMesh,
       this.subjectCoreMesh,
       this.subjectFringeMesh,
-      this.backgroundMesh,
     ]) {
       if (layer) layer.visible = !this.depthMode
+    }
+    if (this.backgroundMesh) {
+      this.backgroundMesh.visible = true
+      this.backgroundMesh.material = this.depthMode
+        ? this.backgroundDepthMaterial
+        : this.backgroundPhotoMaterial
     }
     if (this.mesh) this.mesh.visible = this.depthMode || !this.photoMesh
     if (!this.mesh || !this.loaded) return
@@ -261,37 +294,28 @@ export class GaussianSceneRenderer {
     const sourceToCanvas = Math.max(
       this.canvas.clientWidth / this.sourceWidth,
       this.canvas.clientHeight / this.sourceHeight,
-    )
+    ) * (this.compositionZoom || 1)
     const disparityFactor = Math.max(
       0,
-      (1 / this.motionNearDepth) - (1 / this.motionFarDepth),
+      (1 / this.motionNearDepth) - (1 / this.coverageFarDepth),
     )
-    const baselineFraction = adaptiveBaselineFraction(this.motionNearDepth, this.motionFarDepth)
-    const requestedAmplitude = Math.min(
-      this.motionNearDepth * baselineFraction * this.depthGain * this.currentIntensity,
-      this.motionNearDepth * 0.14,
-    )
-    const safeAmplitude = Math.abs(this.limitDisocclusion(
-      requestedAmplitude,
-      this.sourceWidth,
-    ))
-    const currentBaseline = Math.abs(mapPoseToSafeBaseline(
-      this.currentX,
-      requestedAmplitude,
-      safeAmplitude,
-    ))
+    const baselineFraction = adaptiveBaselineFraction(this.motionNearDepth, this.coverageFarDepth)
+    const currentBaseline = Math.abs(this.appliedCameraX)
     return {
       near: this.nearDepth,
       focus: this.focusDepth,
       far: this.farDepth,
+      anchor: this.motionAnchorDepth,
       ratio: this.depthRatio,
       motionBoost: baselineFraction / 0.022,
       parallaxPx: this.focalPx * currentBaseline * disparityFactor * sourceToCanvas,
-      maxDisocclusionPx: this.sourceWidth * this.maxDisocclusionFraction * sourceToCanvas,
+      maxDisocclusionPx: Math.hypot(this.sourceWidth, this.sourceHeight)
+        * this.maxDisocclusionFraction * sourceToCanvas,
       motionNear: this.motionNearDepth,
-      motionFar: this.motionFarDepth,
+      motionFar: this.coverageFarDepth,
       sourceTextureWidth: this.sourceTextureWidth,
       sourceTextureHeight: this.sourceTextureHeight,
+      compositionZoom: this.compositionZoom,
     }
   }
 
@@ -302,8 +326,28 @@ export class GaussianSceneRenderer {
     this.currentY = 0
     this.currentIntensity = this.intensity
     this.lastRenderTimestamp = null
+    this.appliedCameraX = 0
+    this.appliedCameraY = 0
     this.camera.position.set(0, 0, 0)
     this.camera.lookAt(this.depthAnchor)
+  }
+
+  updateMotionAnchor() {
+    if (this.subjectAnchorDepth > 0) {
+      const subjectDepth = THREE.MathUtils.clamp(
+        this.subjectAnchorDepth,
+        this.motionNearDepth,
+        this.coverageFarDepth,
+      )
+      this.motionAnchorDepth = softSubjectAnchorDepth(
+        subjectDepth,
+        this.coverageFarDepth,
+        SUBJECT_TO_BACKGROUND_MOTION_RATIO,
+      )
+    } else {
+      this.motionAnchorDepth = this.motionFarDepth
+    }
+    this.depthAnchor.set(0, 0, -this.motionAnchorDepth)
   }
 
   resize() {
@@ -344,14 +388,19 @@ export class GaussianSceneRenderer {
     this.currentIntensity += (this.intensity - this.currentIntensity) * easing
 
     // Shallow predictions need a wider camera baseline to remain perceptible on a desktop display.
-    const baselineFraction = adaptiveBaselineFraction(this.motionNearDepth, this.motionFarDepth)
+    const baselineFraction = adaptiveBaselineFraction(this.motionNearDepth, this.coverageFarDepth)
+    const subjectLocked = this.subjectAnchorDepth > 0
+    const baselineGain = subjectLocked ? SUBJECT_LOCK_BASELINE_GAIN : 1
+    const verticalGain = subjectLocked ? 1 : 0.72
     const requestedXAmplitude = THREE.MathUtils.clamp(
-      this.motionNearDepth * baselineFraction * this.depthGain * this.currentIntensity,
+      this.motionNearDepth * baselineFraction * baselineGain
+        * this.depthGain * this.currentIntensity,
       0,
       this.motionNearDepth * 0.14,
     )
     const requestedYAmplitude = THREE.MathUtils.clamp(
-      this.motionNearDepth * baselineFraction * 0.72 * this.depthGain * this.currentIntensity,
+      this.motionNearDepth * baselineFraction * baselineGain * verticalGain
+        * this.depthGain * this.currentIntensity,
       0,
       this.motionNearDepth * 0.1,
     )
@@ -365,8 +414,11 @@ export class GaussianSceneRenderer {
     ))
     const x = mapPoseToSafeBaseline(this.currentX, requestedXAmplitude, safeXAmplitude)
     const y = -mapPoseToSafeBaseline(this.currentY, requestedYAmplitude, safeYAmplitude)
-    this.camera.position.set(x, y, 0)
-    // Converging on the far plane keeps the background stable while near layers parallax.
+    const safePosition = this.limitCameraPositionForCoverage(x, y)
+    this.appliedCameraX = safePosition.x
+    this.appliedCameraY = safePosition.y
+    this.camera.position.set(safePosition.x, safePosition.y, 0)
+    // Lock the dominant subject while the repaired background carries most of the parallax.
     this.camera.lookAt(this.depthAnchor)
     this.renderer.render(this.scene, this.camera)
     const moving = Math.abs(this.poseX - this.currentX) > 0.0001
@@ -382,15 +434,53 @@ export class GaussianSceneRenderer {
   }
 
   limitDisocclusion(baseline, sourceExtent) {
-    if (!this.backgroundMesh || this.maxDisocclusionFraction <= 0) return baseline
-    return limitBaselineForDisocclusion(
-      baseline,
+    if (!this.backgroundMesh) return baseline
+    const repairSafeBaseline = this.maxDisocclusionFraction > 0
+      ? limitBaselineForDisocclusion(
+        baseline,
+        this.motionNearDepth,
+        this.coverageFarDepth,
+        this.focalPx,
+        Math.hypot(this.sourceWidth, this.sourceHeight),
+        this.maxDisocclusionFraction,
+      )
+      : baseline
+    return limitBaselineForFrameCoverage(
+      repairSafeBaseline,
       this.motionNearDepth,
-      this.motionFarDepth,
+      this.coverageFarDepth,
+      this.motionAnchorDepth,
       this.focalPx,
       sourceExtent,
-      this.maxDisocclusionFraction,
+      FRAME_COVERAGE_FRACTION,
     )
+  }
+
+  limitCameraPositionForCoverage(x, y) {
+    if (!this.backgroundMesh || this.backgroundDepth <= 0) return { x, y }
+    if (this.backgroundCoversViewportAt(x, y)) return { x, y }
+    if (!this.backgroundCoversViewportAt(0, 0)) return { x: 0, y: 0 }
+
+    let lower = 0
+    let upper = 1
+    for (let iteration = 0; iteration < 10; iteration += 1) {
+      const scale = (lower + upper) / 2
+      if (this.backgroundCoversViewportAt(x * scale, y * scale)) lower = scale
+      else upper = scale
+    }
+    return { x: x * lower, y: y * lower }
+  }
+
+  backgroundCoversViewportAt(x, y) {
+    this.camera.position.set(x, y, 0)
+    this.camera.lookAt(this.depthAnchor)
+    this.camera.updateMatrixWorld(true)
+    for (let index = 0; index < this.coverageWorldCorners.length; index += 1) {
+      this.coverageProjectedCorners[index]
+        .copy(this.coverageWorldCorners[index])
+        .project(this.camera)
+    }
+    return projectedPolygonCoversViewport(this.coverageProjectedCorners)
   }
 
   disposeScene() {
@@ -486,10 +576,15 @@ export class GaussianSceneRenderer {
       if (motionDepthRange) {
         this.motionNearDepth = Math.min(this.motionNearDepth, motionDepthRange.motionNearDepth)
         this.motionFarDepth = Math.max(this.motionFarDepth, motionDepthRange.motionFarDepth)
+        this.subjectAnchorDepth = motionDepthRange.motionAnchorDepth
+        this.compositionZoom = SUBJECT_COMPOSITION_ZOOM
       }
 
       if (backgroundImage) {
-        const backgroundDepth = this.farDepth * 1.06
+        const backgroundDepth = Math.max(this.farDepth, this.motionFarDepth)
+          * BACKGROUND_DEPTH_SEPARATION
+        this.backgroundDepth = backgroundDepth
+        this.coverageFarDepth = Math.max(this.coverageFarDepth, backgroundDepth)
         const backgroundGeometry = buildBackgroundGeometry({
           width: this.sourceWidth,
           height: this.sourceHeight,
@@ -499,17 +594,28 @@ export class GaussianSceneRenderer {
         const environmentTexture = useLayeredPhoto
           ? this.photoMesh.material.map
           : null
-        const backgroundMaterial = new THREE.MeshBasicMaterial({
-          map: environmentTexture || createPhotoTexture(backgroundImage, this.renderer),
-          side: THREE.DoubleSide,
-          toneMapped: false,
-        })
-        const backgroundMesh = new THREE.Mesh(backgroundGeometry, backgroundMaterial)
+        const backgroundMaterials = createBackgroundLayerMaterials(
+          environmentTexture || createPhotoTexture(backgroundImage, this.renderer),
+        )
+        this.backgroundPhotoMaterial = backgroundMaterials.photo
+        this.backgroundDepthMaterial = backgroundMaterials.depth
+        const backgroundMesh = new THREE.Mesh(
+          backgroundGeometry,
+          this.depthMode ? this.backgroundDepthMaterial : this.backgroundPhotoMaterial,
+        )
         backgroundMesh.position.z = -backgroundDepth
         backgroundMesh.frustumCulled = false
         backgroundMesh.renderOrder = -1100
-        backgroundMesh.visible = !this.depthMode
+        backgroundMesh.visible = true
         this.backgroundMesh = backgroundMesh
+        const halfWidth = this.sourceWidth * backgroundDepth * BACKGROUND_OVERSCAN
+          / (2 * this.focalPx)
+        const halfHeight = this.sourceHeight * backgroundDepth * BACKGROUND_OVERSCAN
+          / (2 * this.focalPx)
+        this.coverageWorldCorners[0].set(-halfWidth, -halfHeight, -backgroundDepth)
+        this.coverageWorldCorners[1].set(halfWidth, -halfHeight, -backgroundDepth)
+        this.coverageWorldCorners[2].set(halfWidth, halfHeight, -backgroundDepth)
+        this.coverageWorldCorners[3].set(-halfWidth, halfHeight, -backgroundDepth)
         this.scene.add(backgroundMesh)
       }
     } catch (error) {
@@ -521,6 +627,11 @@ export class GaussianSceneRenderer {
   disposeSourcePhotoMesh() {
     this.sourceTextureWidth = 0
     this.sourceTextureHeight = 0
+    this.coverageFarDepth = this.motionFarDepth
+    this.backgroundDepth = 0
+    this.subjectAnchorDepth = 0
+    this.compositionZoom = 1
+    const materials = new Set()
     const textures = new Set()
     for (const property of [
       'photoMesh',
@@ -532,13 +643,19 @@ export class GaussianSceneRenderer {
       if (!mesh) continue
       this.scene.remove(mesh)
       mesh.geometry.dispose()
-      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
-      for (const material of materials) {
-        if (material.map) textures.add(material.map)
-        if (material.alphaMap) textures.add(material.alphaMap)
-        material.dispose()
-      }
+      const meshMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      for (const material of meshMaterials) if (material) materials.add(material)
       this[property] = null
+    }
+    for (const material of [this.backgroundPhotoMaterial, this.backgroundDepthMaterial]) {
+      if (material) materials.add(material)
+    }
+    this.backgroundPhotoMaterial = null
+    this.backgroundDepthMaterial = null
+    for (const material of materials) {
+      if (material.map) textures.add(material.map)
+      if (material.alphaMap) textures.add(material.alphaMap)
+      material.dispose()
     }
     for (const texture of textures) texture.dispose()
   }
@@ -547,6 +664,38 @@ export class GaussianSceneRenderer {
     this.disposeScene()
     this.renderer.dispose()
   }
+}
+
+export function projectedPolygonCoversViewport(polygon) {
+  if (!Array.isArray(polygon) || polygon.length !== 4) return false
+  if (polygon.some((corner) => (
+    !Number.isFinite(corner?.x)
+    || !Number.isFinite(corner?.y)
+    || !Number.isFinite(corner?.z)
+    || corner.z < -1
+    || corner.z > 1
+  ))) return false
+  return [
+    { x: -1, y: -1 },
+    { x: 1, y: -1 },
+    { x: 1, y: 1 },
+    { x: -1, y: 1 },
+  ].every((point) => pointInConvexPolygon(point, polygon))
+}
+
+function pointInConvexPolygon(point, polygon) {
+  let winding = 0
+  for (let index = 0; index < polygon.length; index += 1) {
+    const start = polygon[index]
+    const end = polygon[(index + 1) % polygon.length]
+    const cross = (end.x - start.x) * (point.y - start.y)
+      - (end.y - start.y) * (point.x - start.x)
+    if (Math.abs(cross) <= 1e-7) continue
+    const sign = Math.sign(cross)
+    if (!winding) winding = sign
+    else if (sign !== winding) return false
+  }
+  return true
 }
 
 function resolveImage(source) {
@@ -644,6 +793,23 @@ export function createSubjectLayerMaterials(sourceTexture, subjectTexture) {
   }
 }
 
+export function createBackgroundLayerMaterials(photoTexture) {
+  return {
+    photo: new THREE.MeshBasicMaterial({
+      map: photoTexture,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    }),
+    depth: new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    }),
+  }
+}
+
 function createPhotoMesh(geometry, material, renderOrder) {
   const mesh = new THREE.Mesh(geometry, material)
   mesh.frustumCulled = false
@@ -653,7 +819,7 @@ function createPhotoMesh(geometry, material, renderOrder) {
 }
 
 function buildBackgroundGeometry({ width, height, focalPx, depth }) {
-  const overscan = 1.16
+  const overscan = BACKGROUND_OVERSCAN
   const geometry = new THREE.PlaneGeometry(
     width * depth / focalPx * overscan,
     height * depth / focalPx * overscan,
@@ -698,12 +864,7 @@ export function buildLayeredDepthGeometries(depthPixels, metadata, subjectPixels
 
   const field = sampleDepthField(depthPixels, metadata, subjectPixels)
   const stableSubjectDepths = regularizeSubjectDepths(
-    smoothConfidentSubjectDepths(
-      field.depths,
-      field.subjectAlphas,
-      field.columns,
-      field.rows,
-    ),
+    field.depths,
     field.subjectAlphas,
     field.columns,
     field.rows,
@@ -991,18 +1152,27 @@ export function regularizeSubjectDepths(inputDepths, subjectAlphas, columns, row
   if (!subjectAlphas) return depths
 
   const vertexCount = columns * rows
-  const visited = new Uint8Array(vertexCount)
+  const componentLabels = new Int32Array(vertexCount)
+  const seedMask = new Uint8Array(vertexCount)
+  const distances = new Int32Array(vertexCount)
+  distances.fill(-1)
+  const workingDisparities = new Float32Array(vertexCount)
+  const outputDisparities = new Float32Array(vertexCount)
+  for (let vertex = 0; vertex < vertexCount; vertex += 1) {
+    workingDisparities[vertex] = 1 / Math.max(inputDepths[vertex], 1e-4)
+    outputDisparities[vertex] = workingDisparities[vertex]
+  }
   const queue = new Int32Array(vertexCount)
+  let componentLabel = 0
 
   for (let start = 0; start < vertexCount; start += 1) {
-    if (visited[start] || subjectAlphas[start] < SUBJECT_ALPHA_THRESHOLD) continue
+    if (componentLabels[start] || subjectAlphas[start] < SUBJECT_ALPHA_THRESHOLD) continue
 
+    componentLabel += 1
     let head = 0
     let tail = 0
     const component = []
-    const componentDepths = []
-    const coreDepths = []
-    visited[start] = 1
+    componentLabels[start] = componentLabel
     queue[tail] = start
     tail += 1
 
@@ -1010,9 +1180,6 @@ export function regularizeSubjectDepths(inputDepths, subjectAlphas, columns, row
       const vertex = queue[head]
       head += 1
       component.push(vertex)
-      componentDepths.push(inputDepths[vertex])
-      if (subjectAlphas[vertex] >= SUBJECT_CORE_ALPHA) coreDepths.push(inputDepths[vertex])
-
       const row = Math.floor(vertex / columns)
       const column = vertex - row * columns
       for (let rowOffset = -1; rowOffset <= 1; rowOffset += 1) {
@@ -1023,16 +1190,146 @@ export function regularizeSubjectDepths(inputDepths, subjectAlphas, columns, row
           const nextColumn = column + columnOffset
           if (nextColumn < 0 || nextColumn >= columns) continue
           const neighbor = nextRow * columns + nextColumn
-          if (visited[neighbor] || subjectAlphas[neighbor] < SUBJECT_ALPHA_THRESHOLD) continue
-          visited[neighbor] = 1
+          if (componentLabels[neighbor] || subjectAlphas[neighbor] < SUBJECT_ALPHA_THRESHOLD) continue
+          componentLabels[neighbor] = componentLabel
           queue[tail] = neighbor
           tail += 1
         }
       }
     }
 
-    const stableDepth = medianValue(coreDepths.length ? coreDepths : componentDepths)
-    for (const vertex of component) depths[vertex] = stableDepth
+    let maximumAlpha = 0
+    for (const vertex of component) maximumAlpha = Math.max(maximumAlpha, subjectAlphas[vertex])
+    const seedThreshold = Math.max(
+      SUBJECT_ALPHA_THRESHOLD,
+      Math.min(SUBJECT_CORE_ALPHA, maximumAlpha - SUBJECT_FALLBACK_ALPHA_BAND),
+    )
+    const seeds = component.filter((vertex) => subjectAlphas[vertex] >= seedThreshold)
+    const disparityRetention = SUBJECT_DISPARITY_RETENTION * THREE.MathUtils.smoothstep(
+      maximumAlpha,
+      SUBJECT_ALPHA_THRESHOLD,
+      SUBJECT_CORE_ALPHA,
+    )
+    for (const vertex of seeds) seedMask[vertex] = 1
+
+    // Remove only local disparity spikes; broad depth structures remain intact.
+    for (let pass = 0; pass < SUBJECT_DISPARITY_SMOOTHING_PASSES; pass += 1) {
+      const updates = []
+      for (const vertex of seeds) {
+        const row = Math.floor(vertex / columns)
+        const column = vertex - row * columns
+        const neighbors = []
+        for (let rowOffset = -1; rowOffset <= 1; rowOffset += 1) {
+          const nextRow = row + rowOffset
+          if (nextRow < 0 || nextRow >= rows) continue
+          for (let columnOffset = -1; columnOffset <= 1; columnOffset += 1) {
+            if (rowOffset === 0 && columnOffset === 0) continue
+            const nextColumn = column + columnOffset
+            if (nextColumn < 0 || nextColumn >= columns) continue
+            const neighbor = nextRow * columns + nextColumn
+            if (componentLabels[neighbor] === componentLabel && seedMask[neighbor]) {
+              neighbors.push(workingDisparities[neighbor])
+            }
+          }
+        }
+        if (!neighbors.length) continue
+        const median = medianValue(neighbors)
+        const ratio = depthRatio(workingDisparities[vertex], median)
+        const agreeingNeighbors = neighbors.filter(
+          (value) => depthRatio(value, median) <= DEPTH_NOISE_NEIGHBOR_RATIO,
+        ).length
+        const hasConsensus = agreeingNeighbors >= Math.ceil(neighbors.length * 0.75)
+        const isEdgeSpike = neighbors.length < 4 && ratio > SUBJECT_EDGE_SPIKE_RATIO
+        const minimumNeighbor = Math.min(...neighbors)
+        const maximumNeighbor = Math.max(...neighbors)
+        const outsideNeighborEnvelope = workingDisparities[vertex]
+            > maximumNeighbor * SUBJECT_EDGE_SPIKE_RATIO
+          || workingDisparities[vertex] * SUBJECT_EDGE_SPIKE_RATIO < minimumNeighbor
+        if (
+          ratio > MAX_CONNECTED_DEPTH_RATIO
+          && (outsideNeighborEnvelope || (hasConsensus && (neighbors.length >= 4 || isEdgeSpike)))
+        ) {
+          updates.push([vertex, median])
+        }
+      }
+      if (!updates.length) break
+      for (const [vertex, disparity] of updates) workingDisparities[vertex] = disparity
+    }
+
+    const seedDisparities = seeds
+      .map((vertex) => workingDisparities[vertex])
+      .sort((left, right) => left - right)
+    const lower = seeds.length >= SUBJECT_DISPARITY_WINSOR_MIN_VERTICES
+      ? quantile(seedDisparities, SUBJECT_DISPARITY_WINSOR_FRACTION)
+      : seedDisparities[0]
+    const upper = seeds.length >= SUBJECT_DISPARITY_WINSOR_MIN_VERTICES
+      ? quantile(seedDisparities, 1 - SUBJECT_DISPARITY_WINSOR_FRACTION)
+      : seedDisparities[seedDisparities.length - 1]
+    const anchor = medianValue([...seedDisparities])
+    for (const vertex of seeds) {
+      const cleaned = THREE.MathUtils.clamp(workingDisparities[vertex], lower, upper)
+      outputDisparities[vertex] = anchor
+        + (cleaned - anchor) * disparityRetention
+      distances[vertex] = 0
+    }
+
+    // Soft component edges inherit the nearest reliable core instead of mixed background depth.
+    head = 0
+    tail = 0
+    for (const vertex of seeds) {
+      queue[tail] = vertex
+      tail += 1
+    }
+    const seedCount = tail
+    while (head < tail) {
+      const vertex = queue[head]
+      head += 1
+      const row = Math.floor(vertex / columns)
+      const column = vertex - row * columns
+      for (let rowOffset = -1; rowOffset <= 1; rowOffset += 1) {
+        const nextRow = row + rowOffset
+        if (nextRow < 0 || nextRow >= rows) continue
+        for (let columnOffset = -1; columnOffset <= 1; columnOffset += 1) {
+          if (rowOffset === 0 && columnOffset === 0) continue
+          const nextColumn = column + columnOffset
+          if (nextColumn < 0 || nextColumn >= columns) continue
+          const neighbor = nextRow * columns + nextColumn
+          if (
+            componentLabels[neighbor] !== componentLabel
+            || distances[neighbor] >= 0
+          ) continue
+          distances[neighbor] = distances[vertex] + 1
+          queue[tail] = neighbor
+          tail += 1
+        }
+      }
+    }
+    for (let queueIndex = seedCount; queueIndex < tail; queueIndex += 1) {
+      const vertex = queue[queueIndex]
+      const row = Math.floor(vertex / columns)
+      const column = vertex - row * columns
+      const candidates = []
+      for (let rowOffset = -1; rowOffset <= 1; rowOffset += 1) {
+        const nextRow = row + rowOffset
+        if (nextRow < 0 || nextRow >= rows) continue
+        for (let columnOffset = -1; columnOffset <= 1; columnOffset += 1) {
+          if (rowOffset === 0 && columnOffset === 0) continue
+          const nextColumn = column + columnOffset
+          if (nextColumn < 0 || nextColumn >= columns) continue
+          const neighbor = nextRow * columns + nextColumn
+          if (
+            componentLabels[neighbor] === componentLabel
+            && distances[neighbor] >= 0
+            && distances[neighbor] < distances[vertex]
+          ) candidates.push(outputDisparities[neighbor])
+        }
+      }
+      if (candidates.length) outputDisparities[vertex] = medianValue(candidates)
+    }
+
+    for (const vertex of component) {
+      depths[vertex] = 1 / Math.max(outputDisparities[vertex], 1e-4)
+    }
   }
 
   return depths
@@ -1289,16 +1586,23 @@ export function subjectMotionDepthRange(
   fallbackFar,
 ) {
   const depths = []
+  const coreDepths = []
   for (let vertex = 0; vertex < subjectDepths.length; vertex += 1) {
     if (subjectAlphas[vertex] >= SUBJECT_FRINGE_ALPHA) depths.push(subjectDepths[vertex])
+    if (subjectAlphas[vertex] >= SUBJECT_CORE_ALPHA) coreDepths.push(subjectDepths[vertex])
   }
   if (!depths.length) {
+    const near = positiveDepthOr(fallbackNear, 1)
+    const far = positiveDepthOr(fallbackFar, near + 1)
     return {
-      motionNearDepth: positiveDepthOr(fallbackNear, 1),
-      motionFarDepth: positiveDepthOr(fallbackFar, positiveDepthOr(fallbackNear, 1) + 1),
+      motionNearDepth: near,
+      motionFarDepth: far,
+      motionAnchorDepth: far,
     }
   }
   depths.sort((left, right) => left - right)
+  const anchorDepths = coreDepths.length ? coreDepths : depths
+  anchorDepths.sort((left, right) => left - right)
   return {
     motionNearDepth: Math.min(
       positiveDepthOr(fallbackNear, depths[0]),
@@ -1308,6 +1612,7 @@ export function subjectMotionDepthRange(
       positiveDepthOr(fallbackFar, depths[depths.length - 1]),
       quantile(depths, 0.95),
     ),
+    motionAnchorDepth: quantile(anchorDepths, 0.5),
   }
 }
 

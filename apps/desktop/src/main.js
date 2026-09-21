@@ -798,6 +798,7 @@ async function loadGeneratedScene(source, bytes, metadata, request) {
   finishProgressFeed()
   elements.apply.disabled = false
   const depth = runtime.getDepthMetrics()
+  elements.previewSurface.style.setProperty('--scene-zoom', String(depth.compositionZoom || 1))
   elements.depthBadge.hidden = false
   elements.depthReading.textContent = `${depth.near.toFixed(1)} → ${depth.far.toFixed(1)} · ${depth.motionBoost.toFixed(1)}×`
   const motionMessage = depth.motionBoost > 1.15
@@ -817,6 +818,7 @@ async function generateScene(path) {
   state.processing = true
   state.sceneLoaded = false
   elements.previewSurface.classList.remove('has-scene')
+  elements.previewSurface.style.setProperty('--scene-zoom', '1')
   state.sceneSource = null
   clearDepthMap()
   clearFillBackground()
